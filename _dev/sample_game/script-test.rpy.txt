@@ -1,0 +1,62 @@
+# Script de PRUEBA (texto original, no es del juego). Sirve para probar el parser.
+
+define s = DynamicCharacter('s_name', image='sayori', what_prefix='"', what_suffix='"', ctc="ctc")
+define m = DynamicCharacter('m_name', image='monika', what_prefix='"', what_suffix='"')
+define y = Character("Yuri", image="yuri")
+define mc = DynamicCharacter('player', what_prefix='"', what_suffix='"')
+
+default s_name = "Sayori"
+$ m_name = "Monika"
+
+image bg club_day = "bg/club.png"
+image sayori 1a = im.Composite((960, 960), (0, 0), "sayori/1l.png", (0, 0), "sayori/1r.png", (0, 0), "sayori/a.png")
+image sayori 4b = im.Composite((960, 960), (0, 0), "sayori/1l.png", (0, 0), "sayori/1r.png", (0, 0), "sayori/faltante.png")
+image monika 2b = im.Composite((960, 960), (0, 0), "monika/1l.png", (10, 20), "monika/b.png")
+image monika 1c = "monika/solo.png"
+image yuri 3a = im.Composite((960, 960), (0, 0), "yuri/1.png")
+image yuri 1b = im.Flip("yuri/1.png", horizontal=True)
+image natsuki 2a:
+    "natsuki/atl.png"
+
+init python:
+    def helper():
+        return "show sayori 1a at t11"   # esto NO debe leerse como evento
+
+label test_main:
+    scene bg club_day with dissolve
+    play music t3 fadein 1.0
+    show sayori 1a zorder 2 at t11
+    s 1a "Hola, ¿cómo estás? # esto no es un comentario"
+    mc "Bien, gracias."
+    show monika 2b zorder 2 at t21
+    show sayori 1a at t22
+    m 2b "Ahora somos dos."
+    show yuri 3a at f33
+    show monika at h31
+    y "Un tercero entra." with vpunch
+    show monika 1c at hf31, sayori
+    "Narración sin hablante, con {i}estilo{/i}{w=0.5}."
+    show sayori at thide
+    hide sayori
+    s 4b "Ya me voy..."
+    menu:
+        "Quedarme":
+            jump test_stay
+        "Irme" if True:
+            jump test_leave
+
+label test_stay:
+    scene black
+    show natsuki 2a at i11
+    "Natsuki" "Texto con hablante entre comillas."
+    return
+
+label test_leave:
+    scene bg club_day
+    show yuri 1a at l41
+    show monika 1a at r42
+    show sayori 1a at s43
+    y 1b "Cuatro celdas, tres ocupadas."
+    $ renpy.pause(1.0)
+    stop music fadeout 2.0
+    return

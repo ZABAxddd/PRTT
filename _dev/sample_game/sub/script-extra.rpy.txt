@@ -1,0 +1,8 @@
+label test_sub:
+    scene bg club_day
+    show sayori 1a at t11
+    s 1a "Línea en una subcarpeta."
+    show monika 1a at t21
+    show sayori 1a at t22
+    m "Con atributos"
+    return
