@@ -1,0 +1,62 @@
+"""check_install.py - Comprueba que la carpeta PRTT tiene todos los archivos que necesita (sin abrir ventanas).
+
+    py -3 check_install.py
+
+Sigue los `import` desde prtt.py y prtt_gui.py y avisa de los archivos .py que faltan en esta carpeta.
+"""
+import ast
+import importlib.util
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+START = ("prtt.py", "prtt_gui.py")
+OPTIONAL = {"PIL": "Pillow (py -3 -m pip install pillow): sin él no hay sprites ni previews"}
+
+
+def imports_of(path):
+    tree = ast.parse(open(path, encoding="utf-8-sig").read())
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            names.add(node.module.split(".")[0])
+    return names
+
+
+def main() -> int:
+    seen, todo, missing, optional = set(), [s for s in START if os.path.isfile(os.path.join(HERE, s))], {}, set()
+    for s in START:
+        if not os.path.isfile(os.path.join(HERE, s)):
+            missing[s[:-3]] = "(punto de entrada)"
+    while todo:
+        f = todo.pop()
+        if f in seen:
+            continue
+        seen.add(f)
+        for name in imports_of(os.path.join(HERE, f)):
+            local = os.path.join(HERE, name + ".py")
+            if os.path.isfile(local):
+                todo.append(name + ".py")
+            elif name in OPTIONAL and importlib.util.find_spec(name) is None:
+                optional.add(name)
+            elif name != "tkinter" and importlib.util.find_spec(name) is None:      # Tkinter se avisa aparte
+                missing.setdefault(name, f)
+    print(f"Archivos de PRTT revisados: {len(seen)}")
+    for name, who in sorted(missing.items()):
+        print(f"  FALTA  {name}.py   (lo importa {who})")
+    for name in sorted(optional):
+        print(f"  AVISO  {name} no está instalado: {OPTIONAL[name]}")
+    try:
+        import tkinter  # noqa: F401
+    except ImportError:
+        print("  FALTA  Tkinter: reinstala Python marcando «tcl/tk and IDLE».")
+        return 1
+    print("TODO BIEN: la carpeta está completa." if not missing else
+          f"Copia los {len(missing)} archivo(s) que faltan a esta carpeta y vuelve a ejecutar esto.")
+    return 1 if missing else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

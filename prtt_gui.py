@@ -13,11 +13,14 @@ import sys
 import time
 from typing import Optional
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import cells
 import rpy_parser
+import say_edit
 import tfcatalog
+import scene_ctl
+import scene_gui
 import rpy_writer
 from dialogue import DialogueLine, build_index, count_lines, search
 from history import EditHistory
@@ -83,6 +86,8 @@ class DialogueBrowser(tk.Tk):
         self._write_comments = tk.BooleanVar(value=bool(self._settings.get("write_comments", False)))
         self.writer = rpy_writer.ScriptWriter(game_dir, comments=self._write_comments.get())
         self.hist = EditHistory()                         # deshacer / rehacer / cambios sin guardar
+        self._scene_ctl = scene_ctl.SceneController(game_dir)   # escribe las instrucciones `scene` (selector de escenarios)
+        self._scene_key = None                            # (label, nº) del diálogo con el que se abrió el selector
         self._mtimes = {}                  # archivo -> fecha de modificación cuando PRTT lo leyó
         self._autosave_job = None
         self._modal = 0                    # >0 mientras hay un diálogo modal abierto
@@ -128,6 +133,7 @@ class DialogueBrowser(tk.Tk):
         self.info = ttk.Label(top, text="")
         self.info.pack(side="right")
         ttk.Button(top, text="✎ Editar diálogo (F2)", command=self._edit_dialogues).pack(side="left", padx=(12, 0))
+        ttk.Button(top, text="🎬 Escenarios…", command=self._open_scenes).pack(side="left", padx=(6, 0))
 
         panes = ttk.PanedWindow(page, orient="horizontal")
         panes.pack(fill="both", expand=True, padx=8)
@@ -185,6 +191,7 @@ class DialogueBrowser(tk.Tk):
         ttk.Button(bar, text="Guardar PNG", command=self._pv_save).pack(side="left")
         ttk.Button(bar, text="Ajustes leídos", command=self._pv_settings).pack(side="left", padx=4)
         ttk.Button(bar, text="Copiar script", command=self._pv_copy).pack(side="left")
+        ttk.Button(bar, text="🎬 Escenarios…", command=self._open_scenes).pack(side="left", padx=(8, 0))
         self._pv_status = ttk.Label(bar, text="Elige un diálogo en la pestaña «Diálogos».")
         self._pv_status.pack(side="right")
         ops = ttk.Frame(page, padding=(8, 0, 8, 4))
@@ -214,12 +221,26 @@ class DialogueBrowser(tk.Tk):
         self._pv_count_box.bind("<<ComboboxSelected>>", lambda e: self._pv_count_changed())
         self._pv_canvas = tk.Canvas(page, bg="black", highlightthickness=0)
         self._pv_canvas.pack(fill="both", expand=True, padx=8)
+        # Panel del Textbox: qué dice la línea que se ve, selección rápida del hablante y «Editar línea».
+        tb = ttk.LabelFrame(page, text="Textbox", padding=(8, 4))
+        tb.pack(fill="x", padx=8, pady=(4, 0))
+        ttk.Button(tb, text="✎ Editar línea  (F2 · doble clic)", command=self._edit_current_line).pack(side="right")
+        self._tb_speaker = tk.StringVar()
+        self._tb_choices = []
+        self._tb_box = ttk.Combobox(tb, textvariable=self._tb_speaker, state="readonly", width=30)
+        self._tb_box.pack(side="right", padx=(6, 8))
+        self._tb_box.bind("<<ComboboxSelected>>", lambda e: self._tb_quick_speaker())
+        ttk.Label(tb, text="Hablante rápido:").pack(side="right")
+        self._tb_info = ttk.Label(tb, text="", anchor="w")
+        self._tb_info.pack(side="left", fill="x", expand=True)
         self._pv_warn = ttk.Label(page, text="", foreground="#a05000", wraplength=1100, justify="left")
         self._pv_warn.pack(fill="x", padx=8, pady=(4, 8))
         self._pv_canvas.bind("<Configure>", lambda e: self._pv_redraw())
         self._pv_canvas.bind("<Button-1>", self._pv_press)
         self._pv_canvas.bind("<B1-Motion>", self._pv_motion)
         self._pv_canvas.bind("<ButtonRelease-1>", self._pv_release)
+        self._pv_canvas.bind("<Double-Button-1>", self._pv_double)    # doble clic en el textbox: editar la línea
+        self._pv_canvas.bind("<Motion>", self._pv_hover)
         self.bind("<Right>", lambda e: self._pv_key(1))
         self.bind("<Return>", lambda e: self._pv_key(1))
         self.bind("<Left>", lambda e: self._pv_key(-1))
@@ -279,6 +300,7 @@ class DialogueBrowser(tk.Tk):
         self._pv_sync_count(orig)
         self._pv_status.config(
             text=f"{orig.event.label} · {self._pv_i + 1}/{len(self._pv_frames)} · {orig.event.where}")
+        self._tb_refresh(orig)
         dur = eng.duration(frame, prev) if (animate and prev is not None) else 0.0
         if dur > 0:
             self._pv_t0 = time.monotonic()
@@ -464,6 +486,9 @@ class DialogueBrowser(tk.Tk):
     def _pv_press(self, event) -> None:
         self._pv_canvas.focus_set()          # saca el foco de los cuadritos Z (para que ← → funcionen)
         self._pv_drag_src = None
+        if self._pv_in_textbox(event):
+            self._pv_press_info = None
+            return
         k = self._pv_cell_at(event)
         self._pv_press_info = (k, event.x, event.y) if k is not None else None
 
@@ -629,6 +654,70 @@ class DialogueBrowser(tk.Tk):
         txt.pack(fill="both", expand=True)
         txt.insert("1.0", "\n".join(eng.gui.describe()))
         txt.config(state="disabled")
+
+    # ------------------------------------------------------------------ escenarios (fondos y transiciones)
+    def _scene_frame(self):
+        """El diálogo con el que se abrió el selector, releído de los scripts actuales."""
+        if self._scene_key is None:
+            return None
+        label, idx = self._scene_key
+        frames = self._timeline(label) if label in self.db.labels else []
+        return frames[idx] if 0 <= idx < len(frames) else None
+
+    def _scene_find_image(self, path: str):
+        """Máscara de un ImageDissolve de tus .rpy (para dibujar su transición); None si no se encuentra."""
+        real = self.book.resolve_file(path)
+        if not real or not HAVE_TKIMG:
+            return None
+        try:
+            with Image.open(real) as im:
+                return im.convert("L")
+        except (OSError, ValueError):
+            return None
+
+    def _scene_context(self, include_all: bool = False):
+        frame = self._scene_frame()
+        if frame is None:
+            raise RuntimeError("No encuentro el diálogo: pulsa «Recargar .rpy».")
+        return scene_ctl.build_context(self.db, frame, self._scene_find_image, include_all)
+
+    def _scene_apply(self, op: str, bg, effect, reshow: bool):
+        frame = self._scene_frame()
+        if frame is None:
+            return False, "No encuentro el diálogo: pulsa «Recargar .rpy»."
+        ok, msg, full = self._scene_ctl.apply(self.db, frame, op, bg, effect, reshow, self._mtimes)
+        if ok:
+            self._scene_reloaded(full)
+        return ok, msg
+
+    def _scene_undo(self):
+        ok, msg = self._scene_ctl.undo()
+        if ok:
+            self._scene_reloaded(True)            # puede haberse quitado una definición: se relee todo
+        return ok, msg
+
+    def _scene_reloaded(self, full: bool) -> None:
+        """Tras escribir un `scene`: releer los .rpy (tus ediciones de poses pendientes se conservan) y redibujar."""
+        self._reload_db(full=full)
+        if self._pv_visible():
+            self._pv_show(animate=False)
+        else:
+            self._pv_dirty = True
+
+    def _open_scenes(self) -> None:
+        frame = self._pv_frame()
+        if frame is None:
+            messagebox.showinfo("Escenarios", "Elige primero un diálogo en la pestaña «Diálogos».", parent=self)
+            return
+        self._scene_key = self._ekey(frame)
+        dlg = scene_gui.SceneBrowser(self, self._pv_engine, self._scene_context, self._scene_apply,
+                                     self._scene_undo, self._scene_ctl.can_undo)
+        self._modal += 1                           # sin auto-guardado mientras la ventana está abierta
+        try:
+            self.wait_window(dlg)
+        finally:
+            self._modal -= 1
+        self._scene_key = None
 
     # ------------------------------------------------------------------ edición, guardado y deshacer
     @staticmethod
@@ -933,8 +1022,12 @@ class DialogueBrowser(tk.Tk):
 
     # ------------------------------------------------------------------ editar el texto de los diálogos
     def _edit_dialogues(self) -> None:
-        """Abre el editor con las líneas elegidas (una o varias del mismo archivo) tal como están en el script."""
+        """F2 / doble clic / «Editar»: en Preview edita la línea que se ve; en Diálogos, la elegida
+        (una sola -> editor por campos; varias -> editor de texto)."""
         if self._modal:
+            return
+        if self._pv_visible():
+            self._edit_current_line()
             return
         dls = sorted((self._rows[i] for i in self.rows.selection() if i in self._rows),
                      key=lambda d: (d.file, d.line))
@@ -944,12 +1037,87 @@ class DialogueBrowser(tk.Tk):
         if len({d.file for d in dls}) > 1:
             messagebox.showinfo("Editar diálogo", "Elige líneas de un solo archivo a la vez.", parent=self)
             return
+        if len(dls) == 1:
+            self._edit_line(dls[0])
+        else:
+            self._edit_raw(dls)
+
+    def _edit_current_line(self) -> None:
+        """Edita la línea del diálogo que se ve en la pestaña Preview."""
+        if self._modal:
+            return
+        frame = self._pv_frame()
+        dl = self._dl_for_frame(frame) if frame is not None else None
+        if dl is None:
+            messagebox.showinfo("Editar línea", "Elige primero un diálogo en la pestaña «Diálogos».", parent=self)
+            return
+        self._edit_line(dl)
+
+    def _dl_for_frame(self, frame):
+        """La DialogueLine del índice que corresponde a un Frame del preview."""
+        ev = frame.event
+        for infos in self.index.values():
+            for info in infos:
+                if info.name != ev.label:
+                    continue
+                if frame.index < len(info.lines):
+                    dl = info.lines[frame.index]
+                    if dl.file == ev.file and dl.line == ev.line:
+                        return dl
+                return next((d for d in info.lines if d.file == ev.file and d.line == ev.line), None)
+        return None
+
+    def _read_code(self, dl) -> Optional[str]:
         try:
-            stmts = self.writer.read_statements(dls[0].file, [d.line for d in dls])
+            return self.writer.read_statements(dl.file, [dl.line])[0][0]
         except ValueError as exc:
             messagebox.showerror("Editar diálogo", str(exc), parent=self)
+            return None
+
+    def _check_say(self, parts):
+        """(error, línea) para unas SayParts: primero las reglas del editor, luego las del escritor."""
+        why = say_edit.validate(parts, self.db.characters)
+        if why:
+            return why, ""
+        code = say_edit.build_say(parts)
+        return (rpy_writer.validate_say(code) or ""), code
+
+    def _edit_line(self, dl) -> None:
+        """Editor por campos de UNA línea: hablante · pose (opcional) · texto."""
+        old = self._read_code(dl)
+        if old is None:
             return
-        olds = [code for code, _c in stmts]
+        parts = say_edit.parse_say(old)
+        if parts is None:
+            messagebox.showinfo(
+                "Editar línea", "Esta línea no tiene la forma  personaje [pose] \"texto\" ; "
+                "la abro en el editor de texto.", parent=self)
+            self._edit_raw([dl], [old])
+            return
+        dlg = _SayEditor(self, dl, parts, say_edit.speaker_choices(self.db),
+                         say_edit.temp_names(self.db), self._check_say)
+        self._modal += 1
+        try:
+            self.wait_window(dlg)
+        finally:
+            self._modal -= 1
+        if dlg.result is None:
+            return
+        new = say_edit.parse_say(dlg.result)
+        if new is not None and say_edit.same(new, parts):
+            self._pv_status.config(text="Diálogo sin cambios.")
+            return                                   # no se reescribe una línea que dice lo mismo
+        self._apply_dialogue_edits([dl], [old], [dlg.result])
+
+    def _edit_raw(self, dls, olds=None) -> None:
+        """Editor de texto: las líneas tal como están en el script (una o varias)."""
+        if olds is None:
+            try:
+                stmts = self.writer.read_statements(dls[0].file, [d.line for d in dls])
+            except ValueError as exc:
+                messagebox.showerror("Editar diálogo", str(exc), parent=self)
+                return
+            olds = [code for code, _c in stmts]
         dlg = _DialogueEditor(self, dls, olds, rpy_writer.validate_say)
         self._modal += 1
         try:
@@ -958,6 +1126,107 @@ class DialogueBrowser(tk.Tk):
             self._modal -= 1
         if dlg.result is not None:
             self._apply_dialogue_edits(dls, olds, dlg.result)
+
+    # --- textbox del preview: doble clic y selección rápida de hablante
+    def _pv_textbox_span(self):
+        """(y0, y1) del textbox + caja del nombre, en px de la imagen 1280x720."""
+        if self._pv is None:
+            return None
+        g = self._pv.gui
+        h = float(g.textbox_height)
+        top = float(g.textbox_yalign) * (720 - h)
+        return top - 40, top + h
+
+    def _pv_in_textbox(self, event) -> bool:
+        span = self._pv_textbox_span()
+        ox, oy, sc = self._pv_geom
+        if span is None or sc <= 0 or self._pv_img is None:
+            return False
+        ix, iy = (event.x - ox) / sc, (event.y - oy) / sc
+        return 0 <= ix <= 1280 and span[0] <= iy <= span[1]
+
+    def _pv_double(self, event):
+        if self._pv_in_textbox(event):
+            self._edit_current_line()
+            return "break"
+        return None
+
+    def _pv_hover(self, event) -> None:
+        if self._pv_press_info is None and self._pv_drag_src is None:
+            self._pv_canvas.config(cursor="hand2" if self._pv_in_textbox(event) else "")
+
+    def _tb_refresh(self, frame=None) -> None:
+        """Panel Textbox: resumen de la línea y el hablante actual en el desplegable."""
+        frame = frame or self._pv_frame()
+        self._tb_choices = say_edit.quick_choices(self.db)
+        self._tb_box.config(values=[c.label for c in self._tb_choices])
+        if frame is None:
+            self._tb_info.config(text="")
+            self._tb_speaker.set("")
+            return
+        d = frame.event.data
+        who = d["who"]
+        if not who:
+            cur = say_edit.NARRATOR_LABEL
+        elif who in self.db.characters:
+            cur = say_edit.speaker_label(self.db, who)
+        elif who == "extend":
+            cur = ""
+        else:
+            cur = f"“{who}” (temporal)"
+        self._tb_speaker.set(cur)
+        pose = f" [{' '.join(d['attrs'])}]" if d["attrs"] else ""
+        text = d["plain"].replace("\n", " ⏎ ")
+        if len(text) > 90:
+            text = text[:87] + "…"
+        name = d.get("who_name") or who or "(narrador)"
+        temp = " (temporal)" if who and who != "extend" and who not in self.db.characters else ""
+        self._tb_info.config(text=f"{name}{temp}{pose}:  {text}")
+
+    def _tb_quick_speaker(self) -> None:
+        """Cambia el hablante de la línea elegida desde el desplegable del Textbox."""
+        if self._modal:
+            return
+        ch = next((c for c in self._tb_choices if c.label == self._tb_speaker.get()), None)
+        frame = self._pv_frame()
+        dl = self._dl_for_frame(frame) if frame is not None else None
+        if ch is None or dl is None:
+            self._tb_refresh()
+            return
+        if ch.kind == "new":
+            self._modal += 1
+            try:
+                name = simpledialog.askstring("Nombre temporal", "Nombre que verá el jugador (p. ej. ???):",
+                                              parent=self)
+            finally:
+                self._modal -= 1
+            name = " ".join((name or "").split())
+            if not name:
+                self._tb_refresh()
+                return
+            ch = say_edit.Choice("temp", name, name)
+        self._quick_apply(dl, ch)
+        self._tb_refresh()
+
+    def _quick_apply(self, dl, ch) -> None:
+        old = self._read_code(dl)
+        if old is None:
+            return
+        parts = say_edit.parse_say(old)
+        if parts is None:
+            messagebox.showinfo("Editar línea", "Esta línea tiene una forma especial: usa «Editar línea».",
+                                parent=self)
+            return
+        if ((ch.kind == "var" and not parts.temp and parts.speaker == ch.value)
+                or (ch.kind == "narr" and not parts.temp and not parts.speaker)
+                or (ch.kind == "temp" and parts.temp and parts.speaker == ch.value)):
+            return                                     # ya habla ese: no se toca (ni se pierde su pose)
+        new = say_edit.with_speaker(parts, ch.kind, ch.value)
+        why, code = self._check_say(new)
+        if why:
+            messagebox.showerror("Hablante", why, parent=self)
+            return
+        self._apply_dialogue_edits([dl], [old], [code])
 
     def _apply_dialogue_edits(self, dls, olds, news) -> bool:
         """Sobrescribe en el .rpy las líneas cuyo texto cambió y sincroniza lista, índice y preview."""
@@ -1165,6 +1434,151 @@ class _DialogueEditor(tk.Toplevel):
         if not self._check():
             return
         self.result = [l.strip() for l in self._lines()]
+        self.destroy()
+
+
+class _SayEditor(tk.Toplevel):
+    """Editor por campos de UNA línea de diálogo.
+
+        Quién habla (izquierda)                       Texto del diálogo (derecha)
+        ├ Hablante  [selector o texto]                ┌───────────────────────────┐
+        ├ ☐ Hablante no definido / nombre temporal    │ ...                       │
+        └ Pose / expresión (opcional)                 └───────────────────────────┘
+
+    Con «nombre temporal» se escribe  "Nombre" "texto"  (sin Character ni pose). `result` = la línea
+    nueva (str) al aplicar, o None."""
+
+    def __init__(self, master, dl, parts, choices, temp_names, check):
+        super().__init__(master)
+        self.title(f"Editar línea · {dl.label} · {dl.where}")
+        self.transient(master)
+        self.result = None
+        self._p0 = parts
+        self._check = check
+        self._by_label = {c.label: c.value for c in choices if c.kind == "var"}
+        self._label_of = {c.value: c.label for c in choices if c.kind == "var"}
+        self._narr = say_edit.NARRATOR_LABEL
+
+        outer = ttk.Frame(self, padding=10)
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(1, weight=1)
+        outer.rowconfigure(0, weight=1)
+
+        left = ttk.LabelFrame(outer, text="Quién habla", padding=8)
+        left.grid(row=0, column=0, sticky="ns", padx=(0, 10))
+        ttk.Label(left, text="Hablante:").pack(anchor="w")
+        self.v_who = tk.StringVar(value=self._initial_who(parts))
+        self.cb_who = ttk.Combobox(left, textvariable=self.v_who, width=30,
+                                   values=[c.label for c in choices if c.kind in ("narr", "var")])
+        self.cb_who.pack(fill="x", pady=(2, 6))
+        self.v_temp = tk.BooleanVar(value=parts.temp)
+        ttk.Checkbutton(left, text="Hablante no definido / nombre temporal", variable=self.v_temp,
+                        command=self._on_temp).pack(anchor="w")
+        self.hint = ttk.Label(left, text="", wraplength=250, justify="left", foreground="#666666")
+        self.hint.pack(anchor="w", pady=(2, 8))
+        self.cb_temp = None
+        if temp_names:
+            ttk.Label(left, text="Temporales que ya usa el script:").pack(anchor="w")
+            self.cb_temp = ttk.Combobox(left, state="readonly", width=30, values=list(temp_names))
+            self.cb_temp.pack(fill="x", pady=(2, 8))
+            self.cb_temp.bind("<<ComboboxSelected>>", self._on_pick_temp)
+        ttk.Label(left, text="Pose / expresión (opcional):").pack(anchor="w")
+        self.v_pose = tk.StringVar(value=parts.pose)
+        self.ent_pose = ttk.Entry(left, textvariable=self.v_pose, width=32)
+        self.ent_pose.pack(fill="x", pady=(2, 0))
+        ttk.Label(left, text="Vacío = no cambia la pose en esta línea.\nEjemplos:  1a   ·   2b", wraplength=250,
+                  justify="left", foreground="#666666").pack(anchor="w", pady=(2, 0))
+
+        right = ttk.LabelFrame(outer, text="Texto del diálogo", padding=8)
+        right.grid(row=0, column=1, sticky="nsew")
+        sb = ttk.Scrollbar(right, orient="vertical")
+        sb.pack(side="right", fill="y")
+        self.txt = tk.Text(right, width=64, height=10, wrap="word", undo=True, yscrollcommand=sb.set,
+                           font=("TkDefaultFont", 11))
+        sb.config(command=self.txt.yview)
+        self.txt.pack(side="left", fill="both", expand=True)
+        self.txt.insert("1.0", parts.text)
+        self.txt.edit_reset()
+
+        ttk.Label(outer, text="Se escribirá en el script:").grid(row=1, column=0, columnspan=2, sticky="w",
+                                                                 pady=(10, 0))
+        self.lbl_code = tk.Label(outer, text="", anchor="w", justify="left", wraplength=820,
+                                 font=("Courier New", 10), bg="#f2f2f2", relief="sunken", padx=6, pady=3)
+        self.lbl_code.grid(row=2, column=0, columnspan=2, sticky="ew")
+        self.msg = ttk.Label(outer, text="", foreground="#b00000", wraplength=820, justify="left")
+        self.msg.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        btns = ttk.Frame(outer)
+        btns.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side="right")
+        self.btn_ok = ttk.Button(btns, text="Aplicar al script  (Ctrl+Enter)", command=self._ok)
+        self.btn_ok.pack(side="right", padx=6)
+
+        for var in (self.v_who, self.v_pose):
+            var.trace_add("write", lambda *a: self._refresh())
+        self.cb_who.bind("<<ComboboxSelected>>", lambda e: self._refresh())
+        self.txt.bind("<KeyRelease>", lambda e: self._refresh())
+        self.bind("<Control-Return>", lambda e: (self._ok(), "break")[1])
+        self.bind("<Escape>", lambda e: self.destroy())
+        self._refresh()
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_width()) // 2
+        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self.grab_set()
+        self.txt.focus_set()
+
+    def _initial_who(self, p) -> str:
+        if p.temp:
+            return p.speaker
+        if not p.speaker:
+            return self._narr
+        return self._label_of.get(p.speaker, p.speaker)
+
+    def _collect(self):
+        """Las SayParts que describen lo que hay ahora mismo en los campos."""
+        temp = bool(self.v_temp.get())
+        who = self.v_who.get().strip()
+        if temp:
+            speaker = who
+        elif who in ("", self._narr):
+            speaker = ""
+        else:
+            speaker = self._by_label.get(who, who)
+        pose = "" if (temp or not speaker) else self.v_pose.get().strip()
+        return say_edit.SayParts(speaker=speaker, temp=temp, pose=pose, text=self.txt.get("1.0", "end-1c"),
+                                 tail=self._p0.tail, raw_text=self._p0.raw_text, orig_text=self._p0.orig_text)
+
+    def _on_temp(self) -> None:
+        who = self.v_who.get().strip()
+        if self.v_temp.get():
+            if who == self._narr or who in self._by_label:
+                self.v_who.set("")                       # el nombre temporal se escribe a mano
+            self.cb_who.focus_set()
+        elif who not in self._by_label and who != self._narr:
+            self.v_who.set(self._narr)
+        self._refresh()
+
+    def _on_pick_temp(self, _e=None) -> None:
+        self.v_temp.set(True)
+        self.v_who.set(self.cb_temp.get())
+        self._refresh()
+
+    def _refresh(self) -> bool:
+        parts = self._collect()
+        why, code = self._check(parts)
+        narr = not parts.temp and not parts.speaker
+        self.ent_pose.config(state="disabled" if (parts.temp or narr) else "normal")
+        self.hint.config(text=('Se escribe:  "Nombre" "Diálogo".  Sin pose.' if parts.temp else
+                               ("Sin hablante: línea de narrador." if narr else "")))
+        self.lbl_code.config(text=code or "—")
+        self.msg.config(text=why)
+        self.btn_ok.state(["disabled"] if why else ["!disabled"])
+        return not why
+
+    def _ok(self) -> None:
+        if not self._refresh():
+            return
+        self.result = self._check(self._collect())[1]
         self.destroy()
 
 
