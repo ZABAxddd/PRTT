@@ -6,7 +6,7 @@
 
 Elige poses → ajusta posiciones → organiza capas → revisa fondos y música → guarda en tus scripts `.rpy`.
 
-> ⚠️ **PRTT no es un mod de DDLC.** Es una aplicación externa que edita tus scripts. Comprueba siempre el resultado final en Ren'Py antes de distribuir tu mod.
+> ⚠️ **PRTT no es un mod de DDLC.** Es una aplicación externa que edita tus scripts RPY. Comprueba siempre el resultado final en Ren'Py antes de distribuir tu mod.
 
 ---
 
@@ -26,6 +26,9 @@ Navega por archivos y *labels* para encontrar rápidamente la escena que quieres
 
 ### 💾 Guardado protegido
 PRTT crea una copia `.prtt-bak` antes de guardar y te avisa si el archivo fue modificado externamente.
+
+### 💿 Auto-Guardado
+PRTT tiene un sistema de autoguardo que puede ser activado y desactivado a preferencia del usuario y la cual tiene un cooldown de 4 segundos. Perfecto para no interrumpir tu trabajo con pausas para guardar.
 
 > 🧠 **Nota:** las previsualizaciones interpretan los scripts y recursos disponibles, pero **no ejecutan el motor de Ren'Py** ni las ramas del juego.
 
@@ -63,7 +66,7 @@ MiMod/
 
 | Sistema | Cómo iniciar |
 | :--- | :--- |
-| 🪟 **Windows** | Doble clic en `game\PRTT\PRTT.bat` |
+| 🪟 **Windows** | Doble clic en `game\PRTT\PRTT.bat` o en `game\PRTT\PRTT.exe`|
 | 🐧 **Linux** | Terminal en `game/PRTT` → `./PRTT.sh` |
 | 🍎 **macOS** | Abre `PRTT.sh` desde una terminal |
 
@@ -105,6 +108,8 @@ py -3 prtt.py --game "C:\ruta\al\mod\game"
 > | **Pillow** | Composición de sprites |
 > | **pygame-ce** | Escucha de música |
 > | **NumPy** y **SoundFile** | Mejor lectura de ondas de audio |
+
+> (nota, si estas ejecutando la versión portable, no hace falta instalar nada salvo la herramienta en el juego a modificar)
 
 ---
 
