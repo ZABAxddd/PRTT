@@ -566,7 +566,7 @@ class AudioBrowser(tk.Toplevel):
         if track.duration:
             bits.append(audio.fmt_time(track.duration))
         if track.kind != "missing" and not track.file:
-            bits.append(_t("⚠ no encuentro el archivo (¿sigue dentro de un .rpa?): la gráfica va sin onda"))
+            bits.append(_t("⚠ no encuentro el archivo (ni suelto en /game ni dentro de un .rpa): la gráfica va sin onda"))
         lbl_org.config(text="  ·  ".join(b for b in bits if b))
 
     # ------------------------------------------------------------------ gráfica -> controles

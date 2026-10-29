@@ -16,6 +16,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 from i18n import _t
+import rpa_reader
 
 if TYPE_CHECKING:
     from PIL import Image as PILImage
@@ -124,6 +125,7 @@ class SpriteBook:
         self.db = db
         self.game_dir = os.path.abspath(game_dir)
         self.search_dirs = [os.path.join(self.game_dir, "images"), self.game_dir]
+        rpa_reader.get_vault(self.game_dir)                 # .rpa de /game: respaldo si el archivo no está suelto
         self._defs: Dict[str, SpriteDef] = {}
         self._by_tokens: Dict[frozenset, str] = {}
         for name in db.images:
@@ -151,12 +153,13 @@ class SpriteBook:
         return d
 
     def resolve_file(self, path: str) -> Optional[str]:
+        """Ruta en disco, o «rpa://...» si solo está dentro de un .rpa (ábrela con rpa_reader.asset_source)."""
         path = path.replace("\\", "/")
         for base in self.search_dirs:
             cand = os.path.join(base, *path.split("/"))
             if os.path.isfile(cand):
                 return cand
-        return None
+        return rpa_reader.find_in_archives(self.game_dir, path, ("images", ""))
 
     # -------------------------------------------------------------- composición
     def compose(self, name: str) -> Tuple["PILImage.Image", List[str]]:
@@ -172,10 +175,10 @@ class SpriteBook:
             raise SpriteError(d.note)
         found = [l for l in d.layers if l.file]
         if not found:
-            raise SpriteError(_t("No encuentro los archivos de imagen (¿están extraídos de images.rpa?)"))
+            raise SpriteError(_t("No encuentro los archivos de imagen (ni sueltos en /game ni dentro de un .rpa)"))
         opened = []
         for l in found:
-            with Image.open(l.file) as im:
+            with Image.open(rpa_reader.asset_source(l.file)) as im:
                 opened.append((l, im.convert("RGBA")))
         size = d.size or opened[0][1].size
         canvas = Image.new("RGBA", size, (0, 0, 0, 0))

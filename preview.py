@@ -33,6 +33,7 @@ from atl import DEFAULT_STATE, SCREEN_H, SCREEN_W, TransformLib, parse_body
 from guiconf import GuiConf, load_gui, parse_color
 from rpy_parser import HIDE_TRANSFORMS, parse_position
 from sprites import SpriteBook, SpriteError
+import rpa_reader
 from stage import Actor, Frame, Overlay
 import transitions
 
@@ -114,7 +115,7 @@ class Preview:
             real = self.book.resolve_file(path)
             if real:
                 try:
-                    with Image.open(real) as im:
+                    with Image.open(rpa_reader.asset_source(real)) as im:      # ruta o BytesIO si viene de un .rpa
                         img = im.convert("RGBA")
                 except (OSError, ValueError):
                     img = None
@@ -131,9 +132,9 @@ class Preview:
         font = None
         for cand in ([real] if real else []) + list(FALLBACK_FONTS):
             try:
-                font = ImageFont.truetype(cand, size)
+                font = ImageFont.truetype(rpa_reader.asset_source(cand), size)
                 break
-            except OSError:
+            except (OSError, rpa_reader.RpaError):
                 continue
         if font is None:
             try:
@@ -422,7 +423,7 @@ class Preview:
             mask = None
             if real:
                 try:
-                    with Image.open(real) as image:
+                    with Image.open(rpa_reader.asset_source(real)) as image:
                         mask = image.convert("RGB").getchannel("R")
                 except (OSError, ValueError):
                     mask = None

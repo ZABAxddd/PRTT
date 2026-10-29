@@ -81,7 +81,6 @@
   "Agregar     →  {0}": "Add         →  {0}",
   "Elige una pista definida para generar el `play music`.": "Choose a defined track to generate the `play music`.",
   "(sin pista)": "(no track)",
-  "⚠ no encuentro el archivo (¿sigue dentro de un .rpa?): la gráfica va sin onda": "⚠ I can’t find the file (is it still inside an .rpa?): the graph has no waveform",
   "No encuentro el archivo de audio de esa pista; no hay nada que escuchar.": "I can't find the audio file for that track; there is nothing to listen to.",
   "Escuchando desde {0}: el stop cae a los {1} s.": "Listening from {0}: the stop falls at {1} s.",
   "Escuchando «{0}» desde {1}{2}.": "Listening to “{0}” from {1}{2}.",
@@ -433,7 +432,6 @@
   "expresión aún no soportada": "expression not supported yet",
   "Falta Pillow: instala con  pip install pillow": "Pillow is missing: install with  pip install pillow",
   "No hay definición 'image {0}'": "There is no 'image {0}' definition",
-  "No encuentro los archivos de imagen (¿están extraídos de images.rpa?)": "I can't find the image files (are they extracted from images.rpa?)",
   "Sin definición 'image {0}'": "No 'image {0}' definition",
   " (FALTA)": " (MISSING)",
   "\n  capas: ": "\n  layers: ",
@@ -475,6 +473,21 @@
   "Idioma": "Language",
   "Idioma cambiado. PRTT debe reiniciarse para aplicarlo.\n¿Reiniciar ahora?": "Language changed. PRTT must restart to apply it.\nRestart now?",
   "No se pudo reiniciar PRTT: ciérralo y ábrelo de nuevo.": "PRTT could not restart: close it and open it again.",
-  "El idioma se aplicará la próxima vez que abras PRTT.": "The language will apply the next time you open PRTT."
+  "El idioma se aplicará la próxima vez que abras PRTT.": "The language will apply the next time you open PRTT.",
+  "⚠ no encuentro el archivo (ni suelto en /game ni dentro de un .rpa): la gráfica va sin onda": "⚠ I can’t find the file (neither loose in /game nor inside an .rpa): the graph has no waveform",
+  "No encuentro los archivos de imagen (ni sueltos en /game ni dentro de un .rpa)": "I can't find the image files (neither loose in /game nor inside an .rpa)",
+  "el índice contiene un objeto no permitido: {0}.{1}": "the index contains a disallowed object: {0}.{1}",
+  "bytes() con argumentos": "bytes() with arguments",
+  "formato de .rpa no soportado: {0!r}": "unsupported .rpa format: {0!r}",
+  "cabecera de .rpa ilegible": "unreadable .rpa header",
+  "el índice del .rpa apunta fuera del archivo": "the .rpa index points outside the file",
+  "no se pudo leer el índice del .rpa: {0}": "could not read the .rpa index: {0}",
+  "el índice del .rpa no es válido": "the .rpa index is not valid",
+  "el índice del .rpa es demasiado grande": "the .rpa index is too large",
+  "no está en {0}: {1}": "not found in {0}: {1}",
+  "{0}: {1} está truncado": "{0}: {1} is truncated",
+  "no está en ningún .rpa: {0}": "not found in any .rpa: {0}",
+  "nombre no permitido dentro del .rpa: {0}": "name not allowed inside the .rpa: {0}",
+  "no hay ningún .rpa abierto": "no .rpa is open"
  }
 }

@@ -31,6 +31,7 @@ import wave
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 from i18n import _t
+import rpa_reader
 
 from rpy_parser import ScriptDB, unquote
 
@@ -138,7 +139,7 @@ def resolve_file(game_dir: str, path: str) -> Optional[str]:
         cand = os.path.join(game_dir, *([sub] if sub else []), *path.split("/"))
         if os.path.isfile(cand):
             return cand
-    return None
+    return rpa_reader.find_in_archives(game_dir, path, SEARCH_DIRS)     # «rpa://...» si solo está en un .rpa
 
 
 class TrackBook:
@@ -276,6 +277,10 @@ def _mp3_duration(path: str) -> Optional[float]:
 
 
 def probe_duration(path: str) -> Optional[float]:
+    try:
+        path = rpa_reader.real_path(path)               # si viene de un .rpa se extrae a la caché temporal
+    except rpa_reader.RpaError:
+        return None
     ext = os.path.splitext(path)[1].lower()
     try:
         from mutagen import File as _MFile            # opcional: exacto para cualquier formato
@@ -327,6 +332,10 @@ def _peaks_from_samples(samples, channels: int, buckets: int) -> List[float]:
 
 def waveform(path: str, buckets: int = 1200) -> Optional[List[float]]:
     """Picos normalizados (0..1), `buckets` de ellos a lo largo de la pista; None si no hay forma de leerla."""
+    try:
+        path = rpa_reader.real_path(path)
+    except rpa_reader.RpaError:
+        return None
     ext = os.path.splitext(path)[1].lower()
     try:
         if ext == ".wav":
@@ -450,6 +459,10 @@ class Player:
             return self.why
         self.stop()
         pg = self._pg
+        try:
+            file = rpa_reader.real_path(file)
+        except rpa_reader.RpaError as exc:
+            return _t("No se pudo reproducir: {0}", exc)
         try:
             pg.mixer.music.load(file)
             pg.mixer.music.set_volume(env(0.0) if env else 1.0)

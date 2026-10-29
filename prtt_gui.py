@@ -22,6 +22,7 @@ from i18n import _t
 
 import audio
 import cells
+import rpa_reader
 import rpy_parser
 import dialogue
 import tfcatalog
@@ -1196,7 +1197,7 @@ class DialogueBrowser(tk.Tk):
         if not real or not HAVE_TKIMG:
             return None
         try:
-            with Image.open(real) as im:
+            with Image.open(rpa_reader.asset_source(real)) as im:
                 return im.convert("L")
         except (OSError, ValueError):
             return None
