@@ -20,6 +20,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
+from i18n import _t
 
 try:
     from PIL import Image
@@ -41,7 +42,7 @@ class Spec:
 
     @property
     def label(self) -> str:
-        tag = {"renpy": "", "mod": "  · tuya", "usada": "  · usada en tus scripts"}[self.source]
+        tag = {"renpy": "", "mod": _t("  · tuya"), "usada": _t("  · usada en tus scripts")}[self.source]
         return f"{self.name}{tag}{'  (aprox.)' if self.approx else ''}"
 
 
@@ -86,7 +87,7 @@ def _standard() -> List[Spec]:
 
 
 STANDARD: Dict[str, Spec] = {s.name: s for s in _standard()}
-NONE_SPEC = Spec("(ninguna)", "none", 0.0)
+NONE_SPEC = Spec(_t("(ninguna)"), "none", 0.0)
 
 
 # --------------------------------------------------------------------------------------
@@ -199,7 +200,7 @@ def parse_constructor(name: str, expr: str, known: Dict[str, Spec],
         unsupported_warp = _has_unsupported_time_warp(node)
         return Spec(name, "dissolve", num(a[0] if a else kw.get("time"), 0.5), source="mod",
                     approx=unsupported_warp,
-                    note="time_warp personalizado no reproducido" if unsupported_warp else "")
+                    note=_t("time_warp personalizado no reproducido") if unsupported_warp else "")
     if ctor == "Fade":
         out_, hold, inn = (num(a[i] if len(a) > i else kw.get(("out_time", "hold_time", "in_time")[i]), d)
                            for i, d in enumerate((0.5, 0.0, 0.5)))
@@ -215,11 +216,11 @@ def parse_constructor(name: str, expr: str, known: Dict[str, Spec],
         mask = find_image(path) if (find_image and path) else None
         if mask is None:
             return Spec(name, "dissolve", dur, source="mod", approx=True,
-                        note=f"no encuentro la imagen de máscara {path!r}")
+                        note=_t("no encuentro la imagen de máscara {0!r}", path))
         unsupported_warp = _has_unsupported_time_warp(node)
         return Spec(name, "mask", dur, dict(mask=mask, ramp=max(ramp, 1), reverse=bool(kw.get("reverse"))), "mod",
                     approx=unsupported_warp,
-                    note="time_warp personalizado no reproducido" if unsupported_warp else "")
+                    note=_t("time_warp personalizado no reproducido") if unsupported_warp else "")
     if ctor == "CropMove":
         dur = num(a[0] if a else kw.get("time"), 1.0)
         mode = a[1] if len(a) > 1 else kw.get("mode")
@@ -228,7 +229,7 @@ def parse_constructor(name: str, expr: str, known: Dict[str, Spec],
             return Spec(name, kind, dur, dict(dir=d), "mod")
         if mode in ("irisout", "irisin"):
             return Spec(name, "iris", dur, dict(mode=mode[4:]), "mod")
-        return Spec(name, "dissolve", dur, source="mod", approx=True, note=f"CropMove modo {mode!r}")
+        return Spec(name, "dissolve", dur, source="mod", approx=True, note=_t("CropMove modo {0!r}", mode))
     if ctor == "MultipleTransition" and node.args and isinstance(node.args[0], (ast.List, ast.Tuple)):
         steps = _multi_steps(node.args[0], expr, known, find_image)
         if steps is not None:
@@ -236,7 +237,7 @@ def parse_constructor(name: str, expr: str, known: Dict[str, Spec],
                         for kind, value in steps[1::2])
             return Spec(name, "multi", total, dict(steps=steps), "mod")
     dur = num(a[0] if a else kw.get("delay", kw.get("time")), 0.5)
-    return Spec(name, "dissolve", dur, source="mod", approx=True, note=f"{ctor}: dibujada como disolución")
+    return Spec(name, "dissolve", dur, source="mod", approx=True, note=_t("{0}: dibujada como disolución", ctor))
 
 
 def guess_by_name(name: str) -> Spec:
@@ -244,14 +245,14 @@ def guess_by_name(name: str) -> Spec:
     low = name.lower()
     for d in ("left", "right", "up", "down"):
         if "wipe" + d in low:
-            return Spec(name, "wipe", 1.0, dict(dir=d), "usada", True, "adivinada por el nombre")
+            return Spec(name, "wipe", 1.0, dict(dir=d), "usada", True, _t("adivinada por el nombre"))
         if "slide" + d in low:
-            return Spec(name, "slide", 1.0, dict(dir=d), "usada", True, "adivinada por el nombre")
+            return Spec(name, "slide", 1.0, dict(dir=d), "usada", True, _t("adivinada por el nombre"))
     if "fade" in low:
         return Spec(name, "fade", 1.0, dict(out=0.5, hold=0.0, inn=0.5, color=(0, 0, 0)), "usada", True,
-                    "adivinada por el nombre")
+                    _t("adivinada por el nombre"))
     return Spec(name, "dissolve", 0.5 if "half" not in low else 0.25, source="usada", approx=True,
-                note="adivinada por el nombre: no la encuentro definida en tus .rpy")
+                note=_t("adivinada por el nombre: no la encuentro definida en tus .rpy"))
 
 
 _IDENT = re.compile(r"^[A-Za-z_]\w*$")

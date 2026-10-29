@@ -8,11 +8,16 @@ import ast
 import importlib.util
 import os
 import sys
+try:
+    from i18n import _t
+except ImportError:                      # sin i18n.py: todo en español (y esta revisión avisará de que falta)
+    def _t(text, *args):
+        return text.format(*args) if args else text
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 START = ("prtt.py", "prtt_gui.py")
-OPTIONAL = {"PIL": "Pillow (py -3 -m pip install pillow): sin él no hay sprites ni previews",
-            "pygame": "pygame-ce (python -m pip install -r requirements-audio.txt): sin él no se puede escuchar la música en la ventana «Música»"}
+OPTIONAL = {"PIL": _t("Pillow (py -3 -m pip install pillow): sin él no hay sprites ni previews"),
+            "pygame": _t("pygame-ce (python -m pip install -r requirements-audio.txt): sin él no se puede escuchar la música en la ventana «Música»")}
 IGNORED = {"numpy", "soundfile", "mutagen"}      # opcionales de audio.py (forma de onda / duración exacta): sin aviso
 
 
@@ -31,7 +36,7 @@ def main() -> int:
     seen, todo, missing, optional = set(), [s for s in START if os.path.isfile(os.path.join(HERE, s))], {}, set()
     for s in START:
         if not os.path.isfile(os.path.join(HERE, s)):
-            missing[s[:-3]] = "(punto de entrada)"
+            missing[s[:-3]] = _t("(punto de entrada)")
     while todo:
         f = todo.pop()
         if f in seen:
@@ -47,18 +52,20 @@ def main() -> int:
                 optional.add(name)
             elif name != "tkinter" and importlib.util.find_spec(name) is None:      # Tkinter se avisa aparte
                 missing.setdefault(name, f)
-    print(f"Archivos de PRTT revisados: {len(seen)}")
+    print(_t("Archivos de PRTT revisados: {0}", len(seen)))
     for name, who in sorted(missing.items()):
-        print(f"  FALTA  {name}.py   (lo importa {who})")
+        print(_t("  FALTA  {0}.py   (lo importa {1})", name, who))
     for name in sorted(optional):
-        print(f"  AVISO  {name} no está instalado: {OPTIONAL[name]}")
+        print(_t("  AVISO  {0} no está instalado: {1}", name, OPTIONAL[name]))
+    if not os.path.isdir(os.path.join(HERE, "lang")):
+        print("  AVISO  falta la carpeta lang: PRTT funcionará solo en español (copia la carpeta lang completa).")
     try:
         import tkinter  # noqa: F401
     except ImportError:
-        print("  FALTA  Tkinter: reinstala Python marcando «tcl/tk and IDLE».")
+        print(_t("  FALTA  Tkinter: reinstala Python marcando «tcl/tk and IDLE»."))
         return 1
-    print("TODO BIEN: la carpeta está completa." if not missing else
-          f"Copia los {len(missing)} archivo(s) que faltan a esta carpeta y vuelve a ejecutar esto.")
+    print(_t("TODO BIEN: la carpeta está completa.") if not missing else
+          _t("Copia los {0} archivo(s) que faltan a esta carpeta y vuelve a ejecutar esto.", len(missing)))
     return 1 if missing else 0
 
 

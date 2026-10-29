@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional
+from i18n import _t
 
 HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 _COLOR_EXPR = re.compile(r"""^\s*["'](#[0-9a-fA-F]{3,8})["']\s*$""")
@@ -38,10 +39,10 @@ class Background:
     @property
     def origin(self) -> str:
         if self.new:
-            return "nuevo: se definirá al aplicar"
+            return _t("nuevo: se definirá al aplicar")
         if self.kind == "missing":
-            return "sin definir (tus scripts lo usan)"
-        return f"{self.file}:{self.line}" if self.file else "de serie en Ren'Py"
+            return _t("sin definir (tus scripts lo usan)")
+        return f"{self.file}:{self.line}" if self.file else _t("de serie en Ren'Py")
 
 
 _SOLID = re.compile(r"""^\s*Solid\(\s*(?:["'](#[0-9a-fA-F]{3,8})["']|\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*\d+\s*)?\))""")
@@ -79,7 +80,7 @@ def normalize_hex(value: str) -> Optional[str]:
 def color_background(hex_color: str) -> Background:
     c = normalize_hex(hex_color)
     if c is None:
-        raise ValueError(f"color no válido: {hex_color!r} (usa #rrggbb)")
+        raise ValueError(_t("color no válido: {0!r} (usa #rrggbb)", hex_color))
     return Background(f"bg color_{c[1:]}", "color", f'"{c}"', color=c, new=True)
 
 

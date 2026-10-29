@@ -12,6 +12,7 @@ import ast
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
+from i18n import _t
 
 from rpy_parser import ScriptDB
 
@@ -135,7 +136,7 @@ class _Eval:
 
     def __call__(self, expr: str, depth: int = 0):
         if depth > 8:
-            raise ValueError("referencia circular")
+            raise ValueError(_t("referencia circular"))
         return self._n(ast.parse(expr.strip(), mode="eval").body, depth)
 
     def _n(self, n: ast.AST, depth: int):
@@ -149,7 +150,7 @@ class _Eval:
                 return self.db.variables[key]
             if key in ("None", "True", "False"):
                 return {"None": None, "True": True, "False": False}[key]
-            raise ValueError(f"desconocido: {key}")
+            raise ValueError(_t("desconocido: {0}", key))
         if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.USub, ast.UAdd)):
             v = self._n(n.operand, depth)
             return -v if isinstance(n.op, ast.USub) else v
@@ -163,7 +164,7 @@ class _Eval:
             return tuple(self._n(e, depth) for e in n.elts)
         if isinstance(n, ast.Call) and _dotted(n.func) in ("Borders", "Color", "tuple"):
             return tuple(self._n(a, depth) for a in n.args)
-        raise ValueError("expresión no soportada")
+        raise ValueError(_t("expresión no soportada"))
 
 
 @dataclass
@@ -241,10 +242,10 @@ def load_gui(db: ScriptDB) -> GuiConf:
                 except (ValueError, SyntaxError, TypeError):
                     pass
         setattr(g, key, default)
-        g.sources[key] = "POR DEFECTO (no lo encontré en tus .rpy)"
+        g.sources[key] = _t("POR DEFECTO (no lo encontré en tus .rpy)")
 
     # --- tamaño de pantalla: gui.init(1280, 720) no es legible desde .rpy; se asume 1280x720
-    g.sources["width"] = g.sources["height"] = "fijo 1280x720"
+    g.sources["width"] = g.sources["height"] = _t("fijo 1280x720")
 
     # --- caja de texto
     pick("textbox_height", [("window", "ysize")], ["textbox_height"], 182, float)
@@ -252,7 +253,7 @@ def load_gui(db: ScriptDB) -> GuiConf:
     bg = db.style_props("window").get("background", "")
     path = _first_image_path(bg)
     g.textbox_img = path or "gui/textbox.png"
-    g.sources["textbox_img"] = "style window.background" if path else "POR DEFECTO"
+    g.sources["textbox_img"] = "style window.background" if path else _t("POR DEFECTO")
 
     # --- caja del nombre
     pick("name_xpos", [("namebox", "xpos")], ["name_xpos"], 350, float)
@@ -266,7 +267,7 @@ def load_gui(db: ScriptDB) -> GuiConf:
          lambda v: tuple(int(x) for x in v)[:4] if len(v) >= 4 else (int(v[0]),) * 4)
     nb = _first_image_path(db.style_props("namebox").get("background", ""))
     g.namebox_img = nb or "gui/namebox.png"
-    g.sources["namebox_img"] = "style namebox.background" if nb else "POR DEFECTO"
+    g.sources["namebox_img"] = "style namebox.background" if nb else _t("POR DEFECTO")
 
     # --- diálogo
     pick("dialogue_xpos", [("say_dialogue", "xpos")], ["dialogue_xpos"], 268, float)

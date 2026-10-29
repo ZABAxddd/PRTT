@@ -15,6 +15,7 @@ La ventana recibe, en vez de datos, funciones del programa principal:
 import time
 import tkinter as tk
 from tkinter import colorchooser, messagebox, ttk
+from i18n import _t
 
 import scene_edit
 import scenes
@@ -33,7 +34,7 @@ PREV = (480, 270)          # vista previa de la transición (pestaña «Transici
 TRANSITION_CARD = (112, 63)
 TRANSITION_CARD_MIN_WIDTH = 126
 HOLD_START, HOLD_END = 0.35, 0.7      # segundos que se ve el fondo viejo antes y el nuevo después
-KEEP_LABEL = "(conservar la actual)"
+KEEP_LABEL = _t("(conservar la actual)")
 
 
 class _ScrollableFrame(ttk.Frame):
@@ -94,7 +95,7 @@ class _ScrollableFrame(ttk.Frame):
 class SceneBrowser(tk.Toplevel):
     def __init__(self, master, get_engine, get_context, do_apply, do_undo, can_undo):
         super().__init__(master)
-        self.title("Escenarios · fondos y transiciones")
+        self.title(_t("Escenarios · fondos y transiciones"))
         self.resizable(True, True)
         width, height = 1040, 580
         self.geometry(f"{width}x{height}")
@@ -170,8 +171,8 @@ class SceneBrowser(tk.Toplevel):
         left.pack(fill="both", expand=True)
         right.pack(fill="both", expand=True)
         self.tab_bg, self.tab_tr = left_page, right_page
-        self.nb.add(left_page, text="  Fondos  ")
-        self.nb.add(right_page, text="  Transiciones  ")
+        self.nb.add(left_page, text=_t("  Fondos  "))
+        self.nb.add(right_page, text=_t("  Transiciones  "))
         self.nb.bind("<<NotebookTabChanged>>", lambda e: self._on_tab())
 
         # --- carrusel: anterior · ACTUAL · siguiente
@@ -197,13 +198,13 @@ class SceneBrowser(tk.Toplevel):
 
         flt = ttk.Frame(bg_content)
         flt.pack(fill="x", pady=(10, 0))
-        ttk.Label(flt, text="Filtrar:").pack(side="left")
+        ttk.Label(flt, text=_t("Filtrar:")).pack(side="left")
         ent = ttk.Entry(flt, textvariable=self.v_query, width=22)
         ent.pack(side="left", padx=6)
         self.v_query.trace_add("write", lambda *_: self._on_filter())
-        ttk.Checkbutton(flt, text="Mostrar todas las imágenes (no solo bg)", variable=self.v_all,
+        ttk.Checkbutton(flt, text=_t("Mostrar todas las imágenes (no solo bg)"), variable=self.v_all,
                         command=self._on_all).pack(side="left", padx=8)
-        ttk.Button(flt, text="🎨 Color sólido…", command=self._pick_color).pack(side="right")
+        ttk.Button(flt, text=_t("🎨 Color sólido…"), command=self._pick_color).pack(side="right")
         self.lbl_tr_sum = ttk.Label(bg_content, foreground="#555555", wraplength=640, justify="left")
         self.lbl_tr_sum.pack(anchor="w", pady=(10, 0))
 
@@ -233,20 +234,17 @@ class SceneBrowser(tk.Toplevel):
         self.cv_tr.bind("<Configure>", self._schedule_preview_resize)
         ctl = ttk.Frame(preview_panel)
         ctl.pack(pady=(6, 0))
-        ttk.Button(ctl, text="▶ Reproducir", command=self._play).pack(side="left")
-        ttk.Checkbutton(ctl, text="Repetir", variable=self.v_loop, command=self._play).pack(side="left", padx=10)
+        ttk.Button(ctl, text=_t("▶ Reproducir"), command=self._play).pack(side="left")
+        ttk.Checkbutton(ctl, text=_t("Repetir"), variable=self.v_loop, command=self._play).pack(side="left", padx=10)
 
         self.lbl_tr = ttk.Label(details, foreground="#555555", wraplength=380, justify="left")
         self.lbl_tr.pack(anchor="w", pady=(4, 6))
         self.lbl_tr_help = ttk.Label(details, foreground="#777777", wraplength=380, justify="left", text=(
-            "Al elegir el fondo actual, la vista previa muestra el fondo anterior y el actual; si no existe uno "
-            "anterior, usa gris. Al elegir otro fondo, muestra el actual y el nuevo. Las flechas recorren las "
-            "transiciones estándar de Ren'Py y las definidas o usadas por el mod. La transición elegida se usa "
-            "al pulsar Reemplazar o Agregar."
+            _t("Al elegir el fondo actual, la vista previa muestra el fondo anterior y el actual; si no existe uno anterior, usa gris. Al elegir otro fondo, muestra el actual y el nuevo. Las flechas recorren las transiciones estándar de Ren'Py y las definidas o usadas por el mod. La transición elegida se usa al pulsar Reemplazar o Agregar.")
         ))
         self.lbl_tr_help.pack(anchor="w", pady=(6, 0))
 
-        ttk.Label(details, text="Previews de transiciones · selecciona una para aplicarla").pack(
+        ttk.Label(details, text=_t("Previews de transiciones · selecciona una para aplicarla")).pack(
             anchor="w", pady=(8, 3))
         self._transition_gallery = _ScrollableFrame(details, padding=3)
         self._transition_gallery.pack(fill="both", expand=True)
@@ -255,18 +253,18 @@ class SceneBrowser(tk.Toplevel):
         # --- acciones
         acts = ttk.Frame(self, padding=(10, 4, 10, 2))
         acts.pack(fill="x")
-        self.b_replace = ttk.Button(acts, text="Reemplazar escena actual", command=lambda: self._do("replace"))
-        self.b_add = ttk.Button(acts, text="Agregar nuevo escenario", command=lambda: self._do("add"))
-        self.b_delete = ttk.Button(acts, text="Eliminar escenario", command=lambda: self._do("delete"))
-        self.b_undo = ttk.Button(acts, text="↶ Deshacer último cambio", command=self._undo)
+        self.b_replace = ttk.Button(acts, text=_t("Reemplazar escena actual"), command=lambda: self._do("replace"))
+        self.b_add = ttk.Button(acts, text=_t("Agregar nuevo escenario"), command=lambda: self._do("add"))
+        self.b_delete = ttk.Button(acts, text=_t("Eliminar escenario"), command=lambda: self._do("delete"))
+        self.b_undo = ttk.Button(acts, text=_t("↶ Deshacer último cambio"), command=self._undo)
         for b in (self.b_replace, self.b_add, self.b_delete):
             b.pack(side="left", padx=(0, 6))
-        ttk.Button(acts, text="Cerrar", command=self.destroy).pack(side="right")
+        ttk.Button(acts, text=_t("Cerrar"), command=self.destroy).pack(side="right")
         self.b_undo.pack(side="right", padx=6)
         opts = ttk.Frame(self, padding=(10, 0, 10, 0))
         opts.pack(fill="x")
         ttk.Checkbutton(opts, variable=self.v_reshow, text=(
-            "Al agregar, volver a mostrar a los personajes que hay en escena (un `scene` los borra)")).pack(anchor="w")
+            _t("Al agregar, volver a mostrar a los personajes que hay en escena (un `scene` los borra)"))).pack(anchor="w")
         self.lbl_status = ttk.Label(self, padding=(10, 4, 10, 8), wraplength=1000, justify="left")
         self.lbl_status.pack(fill="x")
 
@@ -307,10 +305,10 @@ class SceneBrowser(tk.Toplevel):
 
     def _gallery_transition_name(self, key: str) -> str:
         if key == KEEP_LABEL:
-            return "Conservar actual"
+            return _t("Conservar actual")
         spec = self._specs.get(key)
         if spec is None or spec.kind == "none":
-            return "Sin transición\n(ninguna)"
+            return _t("Sin transición\n(ninguna)")
         return f"with {spec.name}"
 
     def _layout_transition_gallery(self, event=None) -> None:
@@ -355,15 +353,15 @@ class SceneBrowser(tk.Toplevel):
 
     def _transition_display(self, key: str) -> str:
         if key == KEEP_LABEL:
-            return f"{key} — mantener la transición existente"
+            return _t("{0} — mantener la transición existente", key)
         spec = self._specs.get(key)
         if spec is None:
             return key
-        marker = " (aprox.)" if spec.approx else ""
+        marker = _t(" (aprox.)") if spec.approx else ""
         if spec.source == "mod":
-            marker += " · tuya"
+            marker += _t(" · tuya")
         elif spec.source == "usada":
-            marker += " · usada en scripts"
+            marker += _t(" · usada en scripts")
         return f"{spec.name}{marker} — with {spec.name}"
 
     def _on_transition_selected(self, _event=None) -> None:
@@ -393,7 +391,7 @@ class SceneBrowser(tk.Toplevel):
             )
             card["label"].configure(
                 text=("✓ " if key == selected else "") +
-                ("★ Actual · " if is_current else "") +
+                (_t("★ Actual · ") if is_current else "") +
                 self._gallery_transition_name(key),
             )
 
@@ -515,22 +513,22 @@ class SceneBrowser(tk.Toplevel):
     # ------------------------------------------------------------------ carrusel
     def _refresh(self) -> None:
         ctx = self.ctx
-        self.lbl_where.config(text=f"Diálogo: {ctx.where}")
-        self.lbl_cur.config(text=("Escena que manda aquí:  " + ctx.current.text) if ctx.current
-                            else "Escena que manda aquí:  (ninguna en este label)  ·  " + " ".join(ctx.notes))
-        self.lbl_prev.config(text=("Escena anterior (la que vuelve si eliminas esta):  " + ctx.previous.text)
-                             if ctx.previous else "Escena anterior:  (no hay)")
+        self.lbl_where.config(text=_t("Diálogo: {0}", ctx.where))
+        self.lbl_cur.config(text=(_t("Escena que manda aquí:  ") + ctx.current.text) if ctx.current
+                            else _t("Escena que manda aquí:  (ninguna en este label)  ·  ") + " ".join(ctx.notes))
+        self.lbl_prev.config(text=(_t("Escena anterior (la que vuelve si eliminas esta):  ") + ctx.previous.text)
+                             if ctx.previous else _t("Escena anterior:  (no hay)"))
         bg = self.model.current
         n = len(self.model.view)
         if bg is None:
             for cv in (self.cv_prev, self.cv_main, self.cv_next):
                 cv.delete("all")
-            self.lbl_name.config(text="(ningún fondo coincide con el filtro)")
+            self.lbl_name.config(text=_t("(ningún fondo coincide con el filtro)"))
             self.lbl_origin.config(text="")
             self.lbl_warn.config(text="")
         elif not HAVE_TKIMG:
             self.lbl_name.config(text=bg.name)
-            self.lbl_origin.config(text="Falta Pillow para ver los fondos:  py -3 -m pip install pillow")
+            self.lbl_origin.config(text=_t("Falta Pillow para ver los fondos:  py -3 -m pip install pillow"))
         else:
             self._show(self.cv_main, self._image(bg, self._scaled_size(MAIN)), "main")
             for cv, d, tag in ((self.cv_prev, -1, "prev"), (self.cv_next, 1, "next")):
@@ -539,7 +537,7 @@ class SceneBrowser(tk.Toplevel):
                     cv.delete("all")
                 else:
                     self._show(cv, self._image(nb, self._scaled_size(SIDE)), tag)
-            mark = "  ★ el actual" if bg.name == ctx.current_bg else ""
+            mark = _t("  ★ el actual") if bg.name == ctx.current_bg else ""
             self.lbl_name.config(text=f"{bg.name}{mark}   ({self.model.index + 1} / {n})")
             self.lbl_origin.config(text=f"{bg.kind} · {bg.origin}")
             self.lbl_warn.config(text=self._warns.get(bg.name, ""))
@@ -565,19 +563,19 @@ class SceneBrowser(tk.Toplevel):
         label = self.v_tr.get()
         if label == KEEP_LABEL:
             cur = self.ctx.current.transition if self.ctx.current else None
-            what = f"conservar la actual ({cur})" if cur else "conservar la actual (no tiene)"
+            what = _t("conservar la actual ({0})", cur) if cur else _t("conservar la actual (no tiene)")
         else:
             spec = self._specs.get(label)
-            what = "ninguna" if spec is None or spec.kind == "none" else f"{spec.name}  ·  {spec.duration:g} s"
-        return f"Transición: {what}      → se cambia en la pestaña «Transiciones»"
+            what = _t("ninguna") if spec is None or spec.kind == "none" else f"{spec.name}  ·  {spec.duration:g} s"
+        return _t("Transición: {0}      → se cambia en la pestaña «Transiciones»", what)
 
     def _sync_tr(self) -> None:
         """Pone al día los rótulos de las dos pestañas y reproduce SOLO si «Transiciones» está a la vista."""
         self.lbl_tr_sum.config(text=self._tr_summary())
         old_bg, new_bg = self._transition_pair()
         old = old_bg.name
-        self.lbl_route.config(text=f"Vista previa: {old}   →   {new_bg.name}"
-                              if new_bg else f"Vista previa: {old}   →   (ningún fondo coincide con el filtro)")
+        self.lbl_route.config(text=_t("Vista previa: {0}   →   {1}", old, new_bg.name)
+                              if new_bg else _t("Vista previa: {0}   →   (ningún fondo coincide con el filtro)", old))
         if self._tr_visible():
             self._play()
         else:
@@ -586,7 +584,7 @@ class SceneBrowser(tk.Toplevel):
     def _transition_pair(self):
         """El fondo elegido como actual previsualiza la escena previa; otro fondo es el nuevo destino."""
         selected = self.model.current
-        gray = scenes.Background("gris de referencia", "color", color="#808080")
+        gray = scenes.Background(_t("gris de referencia"), "color", color="#808080")
         if selected is not None and self.ctx.current is not None \
                 and selected.name == self.ctx.current_bg:
             old = self._bg_for(self.ctx.previous_bg) if self.ctx.previous else gray
@@ -771,7 +769,7 @@ class SceneBrowser(tk.Toplevel):
         self.model.refilter(keep=keep)
 
     def _pick_color(self) -> None:
-        _rgb, hexc = colorchooser.askcolor(parent=self, title="Color sólido para el fondo")
+        _rgb, hexc = colorchooser.askcolor(parent=self, title=_t("Color sólido para el fondo"))
         if not hexc:
             return
         try:
@@ -784,7 +782,7 @@ class SceneBrowser(tk.Toplevel):
         self.v_query.set("")
         self.model.add(bg)
         self._refresh()
-        self._status(f"Color {bg.color} elegido: se escribirá  {scenes.definition_line(bg)}  al aplicarlo.", ok=True)
+        self._status(_t("Color {0} elegido: se escribirá  {1}  al aplicarlo.", bg.color, scenes.definition_line(bg)), ok=True)
 
     # ------------------------------------------------------------------ transición
     def _effect(self):
@@ -816,12 +814,12 @@ class SceneBrowser(tk.Toplevel):
         label = self.v_tr.get()
         if label == KEEP_LABEL:
             cur = self.ctx.current.transition if self.ctx.current else None
-            info = f"Conserva la que tiene: {cur}" if cur else "La escena actual no tiene transición."
+            info = _t("Conserva la que tiene: {0}", cur) if cur else _t("La escena actual no tiene transición.")
         else:
             info = ""
         if spec is not None:
             info = (info + "  " if info else "") + f"{spec.name}: {spec.duration:g} s" + \
-                   (f" · aproximada ({spec.note or 'dibujo aproximado'})" if spec.approx else "")
+                   (_t(" · aproximada ({0})", spec.note or 'dibujo aproximado') if spec.approx else "")
         self.lbl_tr.config(text=info)
         self.lbl_tr_sum.config(text=self._tr_summary())
         self._show_transition_choice()
@@ -869,9 +867,9 @@ class SceneBrowser(tk.Toplevel):
         bg = self.model.current
         if op == "delete":
             cur = self.ctx.current
-            back = f"Volverá a mandar «{self.ctx.previous.name}»." if self.ctx.previous else "No hay escena anterior."
-            if not messagebox.askyesno("Eliminar escenario",
-                                       f"Se borrará esta instrucción y su transición:\n\n{cur.text}\n\n{back}\n\n¿Continuar?",
+            back = _t("Volverá a mandar «{0}».", self.ctx.previous.name) if self.ctx.previous else _t("No hay escena anterior.")
+            if not messagebox.askyesno(_t("Eliminar escenario"),
+                                       _t("Se borrará esta instrucción y su transición:\n\n{0}\n\n{1}\n\n¿Continuar?", cur.text, back),
                                        parent=self):
                 return
         ok, msg = self._do_apply(op, bg, self._effect(), bool(self.v_reshow.get()))

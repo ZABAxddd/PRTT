@@ -17,24 +17,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Set
+from i18n import _t
 
 from rpy_parser import POS_RE, parse_position
 
 # nombre real, etiqueta, prefijo de las variantes por celda, tipo, ayuda
 _KNOWN = (
-    ("tcommon", "tcommon", "t", "estándar", "Posición normal: entra con fundido desde arriba."),
-    ("tinstant", "tinstant", "i", "estándar", "Aparece al instante, sin animación."),
-    ("focus", "focus", "f", "estándar", "En foco: un poco más grande."),
-    ("hop", "hop", "h", "movimiento", "Pequeño salto."),
-    ("hopfocus", "hop focus", "hf", "movimiento", "Salto y en foco a la vez."),
-    ("sink", "sink", "s", "movimiento", "Se hunde hacia abajo."),
-    ("dip", "dip", "d", "movimiento", "Baja y vuelve a subir."),
-    ("panic", "panic", "", "bucle", "Se balancea sin parar (nerviosa)."),
-    ("leftin", "left in", "l", "entrada", "Entra volando desde la izquierda."),
-    ("rightin", "right in", "r", "entrada", "Entra volando desde la derecha."),
-    ("thide", "thide", "", "salida", "Se desvanece al salir; PRTT agrega `hide` al guardar."),
-    ("lhide", "left hide", "", "salida", "Sale hacia la izquierda; PRTT agrega `hide` al guardar."),
-    ("rhide", "right hide", "", "salida", "Sale hacia la derecha; PRTT agrega `hide` al guardar."),
+    ("tcommon", "tcommon", "t", "estándar", _t("Posición normal: entra con fundido desde arriba.")),
+    ("tinstant", "tinstant", "i", "estándar", _t("Aparece al instante, sin animación.")),
+    ("focus", "focus", "f", "estándar", _t("En foco: un poco más grande.")),
+    ("hop", "hop", "h", "movimiento", _t("Pequeño salto.")),
+    ("hopfocus", "hop focus", "hf", "movimiento", _t("Salto y en foco a la vez.")),
+    ("sink", "sink", "s", "movimiento", _t("Se hunde hacia abajo.")),
+    ("dip", "dip", "d", "movimiento", _t("Baja y vuelve a subir.")),
+    ("panic", "panic", "", "bucle", _t("Se balancea sin parar (nerviosa).")),
+    ("leftin", "left in", "l", "entrada", _t("Entra volando desde la izquierda.")),
+    ("rightin", "right in", "r", "entrada", _t("Entra volando desde la derecha.")),
+    ("thide", "thide", "", "salida", _t("Se desvanece al salir; PRTT agrega `hide` al guardar.")),
+    ("lhide", "left hide", "", "salida", _t("Sale hacia la izquierda; PRTT agrega `hide` al guardar.")),
+    ("rhide", "right hide", "", "salida", _t("Sale hacia la derecha; PRTT agrega `hide` al guardar.")),
 )
 PREFIX_TO_EFFECT = {p: n for n, _l, p, _k, _h in _KNOWN if p}
 
@@ -67,7 +68,7 @@ def effects(db) -> List[Effect]:
     base = {e.name for e in out} | {n for n, *_r in _KNOWN}
     extra = sorted(n for n in defined
                    if n not in base and not is_position_name(n) and not n.startswith("_"))
-    out += [Effect(n, n, "", "propio", "Transform definido en tu transforms.rpy.", known=False) for n in extra]
+    out += [Effect(n, n, "", "propio", _t("Transform definido en tu transforms.rpy."), known=False) for n in extra]
     return out
 
 

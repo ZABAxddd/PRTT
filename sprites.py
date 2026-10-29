@@ -15,6 +15,7 @@ import ast
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
+from i18n import _t
 
 if TYPE_CHECKING:
     from PIL import Image as PILImage
@@ -73,11 +74,11 @@ def parse_image_expr(name: str, expr: str) -> SpriteDef:
         return SpriteDef(name, "unsupported", expr, note=note)
 
     if expr == "<ATL>":
-        return bad("definición ATL (image x:), aún no soportada")
+        return bad(_t("definición ATL (image x:), aún no soportada"))
     try:
         node = ast.parse(expr, mode="eval").body
     except SyntaxError:
-        return bad("no se pudo leer la expresión")
+        return bad(_t("no se pudo leer la expresión"))
 
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return SpriteDef(name, "single", expr, layers=[Layer(0, 0, node.value)])
@@ -93,26 +94,26 @@ def parse_image_expr(name: str, expr: str) -> SpriteDef:
         if short in ("Composite", "LiveComposite"):
             args = node.args
             if len(args) < 3 or len(args) % 2 == 0:
-                return bad(f"{short}: nº de argumentos inesperado")
+                return bad(_t("{0}: nº de argumentos inesperado", short))
             try:
                 size = ast.literal_eval(args[0])
                 size = (int(size[0]), int(size[1]))
             except (ValueError, TypeError, IndexError):
-                return bad(f"{short}: tamaño ilegible")
+                return bad(_t("{0}: tamaño ilegible", short))
             layers: List[Layer] = []
             for i in range(1, len(args), 2):
                 try:
                     pos = ast.literal_eval(args[i])
                     px, py = int(pos[0]), int(pos[1])
                 except (ValueError, TypeError, IndexError):
-                    return bad(f"{short}: posición de capa ilegible")
+                    return bad(_t("{0}: posición de capa ilegible", short))
                 img = args[i + 1]
                 if not (isinstance(img, ast.Constant) and isinstance(img.value, str)):
-                    return bad(f"{short}: capa que no es un archivo simple (¿im.Scale/Flip?)")
+                    return bad(_t("{0}: capa que no es un archivo simple (¿im.Scale/Flip?)", short))
                 layers.append(Layer(px, py, img.value))
             return SpriteDef(name, "composite", expr, size=size, layers=layers)
-        return bad(f"{fname or 'expresión'} aún no soportada")
-    return bad("expresión aún no soportada")
+        return bad(_t("{0} aún no soportada", fname or 'expresión'))
+    return bad(_t("expresión aún no soportada"))
 
 
 # --------------------------------------------------------------------------------------
@@ -161,17 +162,17 @@ class SpriteBook:
     def compose(self, name: str) -> Tuple["PILImage.Image", List[str]]:
         """Devuelve (imagen_PIL_RGBA, [capas_que_faltan]). Lanza SpriteError si no se puede."""
         if not HAVE_PIL:
-            raise SpriteError("Falta Pillow: instala con  pip install pillow")
+            raise SpriteError(_t("Falta Pillow: instala con  pip install pillow"))
         if name in self._cache:
             return self._cache[name]
         d = self.get_def(name)
         if d is None:
-            raise SpriteError(f"No hay definición 'image {name}'")
+            raise SpriteError(_t("No hay definición 'image {0}'", name))
         if d.kind == "unsupported":
             raise SpriteError(d.note)
         found = [l for l in d.layers if l.file]
         if not found:
-            raise SpriteError("No encuentro los archivos de imagen (¿están extraídos de images.rpa?)")
+            raise SpriteError(_t("No encuentro los archivos de imagen (¿están extraídos de images.rpa?)"))
         opened = []
         for l in found:
             with Image.open(l.file) as im:
@@ -207,12 +208,12 @@ def build_cell_views(frame, db, book: SpriteBook) -> List[CellView]:
 
     def make(slot: int, actor) -> CellView:
         pos = f"  ({actor.pos_name})" if actor.pos_name else ""
-        label = f"[{slot}] " if slot else "[sin posición] "
+        label = f"[{slot}] " if slot else _t("[sin posición] ")
         v = CellView(slot, f"{label}{actor.image}{pos}", actor.image,
                      speaking=bool(speaker_tag) and actor.tag == speaker_tag)
         name = book.find_name(actor.tag, actor.attrs)
         if name is None:
-            v.info = f"Sin definición 'image {actor.image}'"
+            v.info = _t("Sin definición 'image {0}'", actor.image)
             return v
         d = book.get_def(name)
         v.info = describe(d)
@@ -225,7 +226,7 @@ def build_cell_views(frame, db, book: SpriteBook) -> List[CellView]:
     cells = stage.cells()
     for i, actor in enumerate(cells, 1):
         if actor is None:
-            views.append(CellView(i, f"[{i}] vacía"))
+            views.append(CellView(i, _t("[{0}] vacía", i)))
         else:
             views.append(make(i, actor))
     for actor in stage.unplaced():
@@ -240,9 +241,9 @@ def describe(d: Optional[SpriteDef]) -> str:
         return f"{d.name}: {d.note}"
     names = []
     for l in d.layers:
-        mark = "" if l.file else " (FALTA)"
+        mark = "" if l.file else _t(" (FALTA)")
         names.append(f"{l.path}{mark}")
     head = f"{d.name}: {'composición' if d.kind == 'composite' else 'imagen'}"
     if d.size:
         head += f" {d.size[0]}x{d.size[1]}"
-    return head + "\n  capas: " + ", ".join(names)
+    return head + _t("\n  capas: ") + ", ".join(names)

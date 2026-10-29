@@ -28,6 +28,7 @@ import os
 import re
 from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Tuple
+from i18n import _t
 
 from rpy_parser import HIDE_TRANSFORMS, POS_RE, parse_position
 from stage import Actor, Frame, Stage
@@ -94,24 +95,23 @@ def parse_transform_list(text: str) -> List[str]:
     paréntesis (modo avanzado). Lo que no se pueda escribir en un `at` se rechaza."""
     raw = (text or "").strip()
     if not raw:
-        raise ValueError("escribe un transform (por ejemplo t21)")
+        raise ValueError(_t("escribe un transform (por ejemplo t21)"))
     if "\n" in raw or "#" in raw:
-        raise ValueError("el transform debe ir en una sola línea y sin comentarios")
+        raise ValueError(_t("el transform debe ir en una sola línea y sin comentarios"))
     names = split_top(raw)
     for n in names:
         m = _CALL_RE.match(n)
         if not n or not m or m.group(1) in _RESERVED:
-            raise ValueError(f"transform no válido: «{n}». Usa un nombre como t21 o mi_pos, o una llamada "
-                             "como hop(x=400); varios, separados por comas.")
+            raise ValueError(_t("transform no válido: «{0}». Usa un nombre como t21 o mi_pos, o una llamada como hop(x=400); varios, separados por comas.", n))
         if m.group(2) and split_top(m.group(3)) is None:      # (por si acaso)
-            raise ValueError(f"paréntesis mal cerrados en «{n}»")
+            raise ValueError(_t("paréntesis mal cerrados en «{0}»", n))
         depth = 0
         for ch in n:
             depth += (ch in "([{") - (ch in ")]}")
             if depth < 0:
-                raise ValueError(f"paréntesis mal cerrados en «{n}»")
+                raise ValueError(_t("paréntesis mal cerrados en «{0}»", n))
         if depth != 0:
-            raise ValueError(f"paréntesis mal cerrados en «{n}»")
+            raise ValueError(_t("paréntesis mal cerrados en «{0}»", n))
     return names
 
 
@@ -193,9 +193,9 @@ class CellLayout:
         if n == 0:
             self.slots.clear()
             self.count = 0
-            return 0, [f"{img}: {old} -> fuera" for img, old in before.values()]
+            return 0, [_t("{0}: {1} -> fuera", img, old) for img, old in before.values()]
         for k in sorted(k for k in self.slots if k > n and not self._floating(self.slots[k])):
-            moves.append(f"{self.slots[k].image}: {before[k][1]} -> fuera")
+            moves.append(_t("{0}: {1} -> fuera", self.slots[k].image, before[k][1]))
             del self.slots[k]
         self.count = n
         for k, p in self.slots.items():
@@ -215,7 +215,7 @@ class CellLayout:
     # ------------------------------------------------------------------ editar celdas
     def _check(self, slot: int) -> None:
         if not 1 <= slot <= self.count:
-            raise ValueError(f"celda {slot} fuera de rango (hay {self.count})")
+            raise ValueError(_t("celda {0} fuera de rango (hay {1})", slot, self.count))
 
     def put(self, slot: int, p: Placement) -> str:
         """Coloca `p` en `slot`. Reemplaza al ocupante; si `p` ya estaba en otra celda, la libera
@@ -227,14 +227,14 @@ class CellLayout:
             if old is not None:
                 old.transform = ""                       # cambia de celda: vuelve al estándar
                 self.slots[j] = old
-                msg = f"{p.image} -> {self._at(slot, p)} · {old.image} -> {self.name(j)} (intercambio)"
+                msg = _t("{0} -> {1} · {2} -> {3} (intercambio)", p.image, self._at(slot, p), old.image, self.name(j))
             else:
                 del self.slots[j]
                 msg = f"{p.image}: {self.name(j)} -> {self._at(slot, p)}"
         elif old is not None and old.tag != p.tag:
-            msg = f"{old.image} reemplazado por {p.image} en {self._at(slot, p)}"
+            msg = _t("{0} reemplazado por {1} en {2}", old.image, p.image, self._at(slot, p))
         else:
-            msg = f"{p.image} en {self._at(slot, p)}"
+            msg = _t("{0} en {1}", p.image, self._at(slot, p))
         self.slots[slot] = p
         self._norm()
         return msg
@@ -257,7 +257,7 @@ class CellLayout:
 
     def remove(self, slot: int) -> str:
         p = self.slots.pop(slot, None)
-        return f"{p.image} quitado" if p else ""
+        return _t("{0} quitado", p.image) if p else ""
 
     def drag(self, src: int, dst: int) -> str:
         """Arrastrar la celda `src` a `dst`. Si `dst` está vacía, el personaje se mueve. Si está ocupada,
@@ -267,7 +267,7 @@ class CellLayout:
         self._check(dst)
         mover = self.slots.get(src)
         if mover is None:
-            raise ValueError(f"la celda {self.name(src)} está vacía")
+            raise ValueError(_t("la celda {0} está vacía", self.name(src)))
         if src == dst:
             return ""
         occupant = self.slots.get(dst)
@@ -283,13 +283,13 @@ class CellLayout:
         occupant.transform = ""
         self.slots[to] = occupant
         self._norm()
-        return f"{mover.image} -> {self.name(dst)} · {occupant.image} se desplaza a {self.name(to)}"
+        return _t("{0} -> {1} · {2} se desplaza a {3}", mover.image, self.name(dst), occupant.image, self.name(to))
 
     def _first_free(self) -> int:
         for k in range(1, MAX_CELLS + 1):
             if k not in self.slots:
                 return k
-        raise ValueError("no hay ninguna celda libre: elige una celda concreta")
+        raise ValueError(_t("no hay ninguna celda libre: elige una celda concreta"))
 
     def place_at(self, transform: str, p: Placement, slot: Optional[int] = None,
                  reflow: bool = True) -> str:
@@ -314,7 +314,7 @@ class CellLayout:
                 eff, moves = self.set_count(n)
                 notes += moves
                 if eff != n:
-                    notes.append(f"no se puede usar {names[0]}: hay {eff} personajes colocados")
+                    notes.append(_t("no se puede usar {0}: hay {1} personajes colocados", names[0], eff))
                     k = min(k, eff)
             names[0] = f"{prefix}{self.count}{k}"
             target = k
@@ -324,7 +324,7 @@ class CellLayout:
                 target = (pos.slot if pos is not None and pos.slot <= MAX_CELLS
                           else (self.slot_of(p.tag) or self._first_free()))
             if not 1 <= target <= MAX_CELLS:
-                raise ValueError(f"celda {target} fuera de rango (1..{MAX_CELLS})")
+                raise ValueError(_t("celda {0} fuera de rango (1..{1})", target, MAX_CELLS))
             if target > self.count:
                 _eff, moves = self.set_count(target)
                 notes += moves
@@ -443,15 +443,15 @@ BASE_CHARACTERS = ("sayori", "yuri", "natsuki", "monika")
 _BODY_RE = re.compile(r"^\d+[a-z]*?[lr]$")
 _POSE_RE = re.compile(r"^\d+[a-z]*$")
 _TOKEN_RE = re.compile(r"^(\d+)([a-z]*)$")
-OUTFITS = {"": "Escolar", "b": "Casual"}
+OUTFITS = {"": _t("Escolar"), "b": "Casual"}
 
 
 def outfit_label(pose: str) -> str:
     """'1' -> Escolar, '1b' -> Casual, otra letra -> 'Variante x', imagen suelta -> 'Especial'."""
     m = _TOKEN_RE.match(pose)
     if not m:
-        return "Especial"
-    return OUTFITS.get(m.group(2), f"Variante {m.group(2)}")
+        return _t("Especial")
+    return OUTFITS.get(m.group(2), _t("Variante {0}", m.group(2)))
 
 
 def character_tags(db) -> List[str]:

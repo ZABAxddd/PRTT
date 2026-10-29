@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
+from i18n import _t
 
 import audio
 from rpy_parser import TOKEN_RE, _scan
@@ -208,16 +209,14 @@ def active_before(db, idx: int, indent: int, book: audio.TrackBook) -> Link:
         if e.file != ev.file or e.indent > indent or not _is_music(e):
             continue
         if e.kind == "stop":
-            return Link("stopped", note=f"ya la detuvo un `stop music` en {e.file}:{e.line}; "
-                                        "este stop no detendría nada")
+            return Link("stopped", note=_t("ya la detuvo un `stop music` en {0}:{1}; este stop no detendría nada", e.file, e.line))
         if e.data.get("queued"):
             continue
         ref = _make_ref(db, j, book)
         if ref.track is not None:
-            return Link("playing", ref.track, ref, f"{ref.track.name} ({ref.track.short}), empezó en {e.file}:{e.line}")
-        return Link("playing", None, ref, f"lo que empezó en {e.file}:{e.line} ({ref.target or e.raw})")
-    return Link("none", note="no hay ningún `play music` antes de este punto en este label "
-                             "(la música puede venir de otro label)")
+            return Link("playing", ref.track, ref, _t("{0} ({1}), empezó en {2}:{3}", ref.track.name, ref.track.short, e.file, e.line))
+        return Link("playing", None, ref, _t("lo que empezó en {0}:{1} ({2})", e.file, e.line, ref.target or e.raw))
+    return Link("none", note=_t("no hay ningún `play music` antes de este punto en este label (la música puede venir de otro label)"))
 
 
 def find_refs(db, frame, book: audio.TrackBook) -> Tuple[Optional[AudioRef], Optional[AudioRef], Optional[int]]:
@@ -287,18 +286,17 @@ def build_context(db, frame, game_dir: str) -> Context:
     play, stop, idx = find_refs(db, frame, book)
     notes: List[str] = []
     if idx is None:
-        return Context(frame.event.where, None, None, None, tracks, Link("none", note="diálogo no encontrado"), None,
-                       ["No encuentro el diálogo en los scripts: pulsa «Recargar .rpy»."])
+        return Context(frame.event.where, None, None, None, tracks, Link("none", note=_t("diálogo no encontrado")), None,
+                       [_t("No encuentro el diálogo en los scripts: pulsa «Recargar .rpy».")])
     ev = frame.event
     link_add = active_before(db, idx, ev.indent, book)
     link_rep = active_before(db, stop.idx, stop.indent, book) if stop is not None else None
     music = frame.stage.music
     playing = book.find(music) if music and not music.startswith("[") else None
     if play is None and stop is None:
-        notes.append("Este diálogo no tiene ningún `play music` ni `stop music` antes dentro de su label: "
-                     "solo se puede AGREGAR uno.")
+        notes.append(_t("Este diálogo no tiene ningún `play music` ni `stop music` antes dentro de su label: solo se puede AGREGAR uno."))
     if not any(t.kind != "missing" for t in tracks):
-        notes.append("No encontré ninguna pista definida (`define audio.x = \"bgm/x.ogg\"`) en tus .rpy.")
+        notes.append(_t("No encontré ninguna pista definida (`define audio.x = \"bgm/x.ogg\"`) en tus .rpy."))
     return Context(f"{ev.label} · {ev.where}", play, stop, playing, tracks, link_add, link_rep, notes,
                    window_music(db, idx))
 
@@ -310,12 +308,10 @@ def _check_ref(lines: List[str], ref: AudioRef) -> Parsed:
     i = ref.line - 1
     code = single_line(lines[i]) if 0 <= i < len(lines) else None
     if code is None or _norm(code.strip()) != _norm(ref.raw):
-        raise SceneError(f"{ref.file}:{ref.line}: esa línea ya no coincide con lo que PRTT leyó. "
-                         "Pulsa «Recargar .rpy» y vuelve a intentarlo.")
+        raise SceneError(_t("{0}:{1}: esa línea ya no coincide con lo que PRTT leyó. Pulsa «Recargar .rpy» y vuelve a intentarlo.", ref.file, ref.line))
     parsed = parse_audio_code(code.strip())
     if parsed is None:
-        raise SceneError(f"{ref.file}:{ref.line}: esta instrucción usa algo que no reescribo con seguridad "
-                         "(`with`, `if`, varias líneas...). Edítala a mano en el .rpy.")
+        raise SceneError(_t("{0}:{1}: esta instrucción usa algo que no reescribo con seguridad (`with`, `if`, varias líneas...). Edítala a mano en el .rpy.", ref.file, ref.line))
     return parsed
 
 
@@ -333,7 +329,7 @@ def _with_note(phys: str, new_code: str, note: str) -> str:
 def replace_play(lines: List[str], ref: AudioRef, track_ref: str, opts: Options) -> str:
     parsed = _check_ref(lines, ref)
     if parsed.cmd != "play" or parsed.channel != CHANNEL:
-        raise SceneError(f"{ref.file}:{ref.line}: no es un `play music`. Pulsa «Recargar .rpy».")
+        raise SceneError(_t("{0}:{1}: no es un `play music`. Pulsa «Recargar .rpy».", ref.file, ref.line))
     code = build_play(track_ref, opts.fadein, opts.loop, parsed)
     i = ref.line - 1
     lines[i] = with_code(lines[i], code)
@@ -343,7 +339,7 @@ def replace_play(lines: List[str], ref: AudioRef, track_ref: str, opts: Options)
 def replace_stop(lines: List[str], ref: AudioRef, opts: Options, note: str = "") -> str:
     parsed = _check_ref(lines, ref)
     if parsed.cmd != "stop" or parsed.channel != CHANNEL:
-        raise SceneError(f"{ref.file}:{ref.line}: no es un `stop music`. Pulsa «Recargar .rpy».")
+        raise SceneError(_t("{0}:{1}: no es un `stop music`. Pulsa «Recargar .rpy».", ref.file, ref.line))
     code = build_stop(opts.fadeout)
     i = ref.line - 1
     lines[i] = _with_note(lines[i], code, note if opts.note else "")
@@ -355,13 +351,13 @@ def add_line(lines: List[str], where_line: int, expect_raw: str, code: str, eol:
     """Inserta `code` ANTES de la línea `where_line` (1..) con su sangría, sin tocar nada más."""
     i = where_line - 1
     if not 0 <= i < len(lines) or not _norm(lines[i]).startswith(_norm(expect_raw)[:12]):
-        raise SceneError("la línea del diálogo ya no está donde PRTT la leyó. Pulsa «Recargar .rpy».")
+        raise SceneError(_t("la línea del diálogo ya no está donde PRTT la leyó. Pulsa «Recargar .rpy»."))
     j = i - 1
     while j >= 0 and not lines[j].strip():
         j -= 1
     prev = single_line(lines[j]) if j >= 0 else None
     if prev is not None and _norm(prev.strip()) == _norm(code):          # doble clic: no se repite la misma línea
-        return code + "  (ya estaba escrita justo encima)"
+        return code + _t("  (ya estaba escrita justo encima)")
     text = code + (f"  {NOTE_PREFIX} {note}" if note else "")
     lines.insert(i, _indent_of(lines[i]) + text + eol)
     return code
@@ -380,7 +376,7 @@ class AudioController:
 
     def undo(self) -> Tuple[bool, str]:
         ok, msg = self.writer.undo()
-        return ok, ("Cambio de música deshecho." if ok else msg)
+        return ok, (_t("Cambio de música deshecho.") if ok else msg)
 
     def apply(self, db, frame, op: str, track: Optional[audio.Track], opts: Options,
               mtimes: Optional[Dict[str, int]] = None) -> Tuple[bool, str]:
@@ -391,17 +387,16 @@ class AudioController:
         steps: List[Step] = []
         info = ""
         try:
-            if ctx.notes and ctx.notes[0].startswith("No encuentro el diálogo"):
+            if ctx.notes and ctx.notes[0].startswith(_t("No encuentro el diálogo")):
                 raise SceneError(ctx.notes[0])
             if op in ("replace_play", "add_play"):
                 if track is None:
-                    raise SceneError("Elige una pista.")
+                    raise SceneError(_t("Elige una pista."))
                 if track.kind == "missing":
-                    raise SceneError(f"«{track.short}» no está definida en tus .rpy "
-                                     "(`define audio.%s = \"...\"`): defínela antes." % track.short)
+                    raise SceneError(_t("«{0}» no está definida en tus .rpy (`define audio.%s = \"...\"`): defínela antes.", track.short) % track.short)
             if op == "replace_play":
                 if ctx.play is None:
-                    raise SceneError("No hay ningún `play music` que mande en este diálogo: usa «Agregar».")
+                    raise SceneError(_t("No hay ningún `play music` que mande en este diálogo: usa «Agregar»."))
                 ref = ctx.play
                 steps.append((ref.file, lambda lines, eol: replace_play(lines, ref, track.ref, opts),
                               mtimes.get(ref.file)))
@@ -411,7 +406,7 @@ class AudioController:
                               mtimes.get(ev.file)))
             elif op == "replace_stop":
                 if ctx.stop is None:
-                    raise SceneError("No hay ningún `stop music` que mande en este diálogo: usa «Agregar».")
+                    raise SceneError(_t("No hay ningún `stop music` que mande en este diálogo: usa «Agregar»."))
                 ref, link = ctx.stop, ctx.link_for(True)
                 note = link.title
                 steps.append((ref.file, lambda lines, eol: replace_stop(lines, ref, opts, note),
@@ -425,7 +420,7 @@ class AudioController:
                     mtimes.get(ev.file)))
                 info = _link_text(link)
             else:
-                raise SceneError(f"operación desconocida: {op}")
+                raise SceneError(_t("operación desconocida: {0}", op))
         except SceneError as exc:
             return False, str(exc)
         ok, msg = self.writer.apply(steps)
@@ -434,14 +429,13 @@ class AudioController:
         if op in ("add_play", "add_stop") and ctx.window:
             last = ctx.window[-1]
             what = "`play music`" if last.kind == "play" else "`stop music`"
-            effect = "lo sustituye" if op == "add_play" else "lo corta"
+            effect = _t("lo sustituye") if op == "add_play" else _t("lo corta")
             info = (info + "  ·  " if info else "") + (
-                f"Ojo: justo encima de este diálogo ya hay un {what} ({last.file}:{last.line}); lo nuevo "
-                f"{effect} al instante. Si querías cambiar esa instrucción, usa «Reemplazar».")
+                _t("Ojo: justo encima de este diálogo ya hay un {0} ({1}:{2}); lo nuevo {3} al instante. Si querías cambiar esa instrucción, usa «Reemplazar».", what, last.file, last.line, effect))
         return True, (msg + ("  ·  " + info if info else "")).strip()
 
 
 def _link_text(link: Link) -> str:
     if link.state == "playing":
-        return f"Detiene {link.note}."
-    return f"Ojo: {link.note}." if link.note else ""
+        return _t("Detiene {0}.", link.note)
+    return _t("Ojo: {0}.", link.note) if link.note else ""

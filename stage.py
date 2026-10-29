@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
+from i18n import _t
 
 from rpy_parser import Event, ScriptDB, parse_position
 
@@ -192,11 +193,11 @@ class Frame:
                 flag = f" ({a.pos_name}{'*' if a.motion not in ('', 'appear', 'instant') else ''})"
                 cells.append(f"[{i}] {a.image}{flag}")
         extra = [a.image for a in s.unplaced()]
-        head = f"bg={s.bg or '-'} | celdas={s.layout_count()}"
-        body = "  ".join(cells) if cells else "(sin personajes)"
+        head = _t("bg={0} | celdas={1}", s.bg or '-', s.layout_count())
+        body = "  ".join(cells) if cells else _t("(sin personajes)")
         if extra:
-            body += f"  sin_posición: {', '.join(extra)}"
-        who = s.speaker or "(narrador)"
+            body += _t("  sin_posición: {0}", ', '.join(extra))
+        who = s.speaker or _t("(narrador)")
         return f"{head}  {body}\n    {who}: {s.text}"
 
 

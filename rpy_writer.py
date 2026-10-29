@@ -59,6 +59,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple
+from i18n import _t
 
 import cells
 from atl import TransformLib
@@ -272,11 +273,11 @@ def validate_say(code: str) -> Optional[str]:
     """None si `code` es UN diálogo válido para el parser de PRTT; si no, el motivo."""
     code = code.strip()
     if not code:
-        return "la línea está vacía"
+        return _t("la línea está vacía")
     if "\n" in code or "\r" in code:
-        return "debe ser una sola línea (usa \\n dentro del texto para saltos)"
+        return _t("debe ser una sola línea (usa \\n dentro del texto para saltos)")
     if code.endswith(":"):
-        return "no puede terminar en «:» (sería un menú o un bloque)"
+        return _t("no puede terminar en «:» (sería un menú o un bloque)")
     quote, i = None, 0
     while i < len(code):                       # el parser perdona comillas sin cerrar; aquí no
         c = code[i]
@@ -290,12 +291,12 @@ def validate_say(code: str) -> Optional[str]:
             quote = c
         i += 1
     if quote:
-        return "hay unas comillas sin cerrar"
+        return _t("hay unas comillas sin cerrar")
     db = ScriptDB()
     db.parse_text("label _prtt_check:\n    " + code + "\n", "_check")
     evs = [e for e in db.events if e.kind != "label"]
     if len(evs) != 1 or evs[0].kind != "say":
-        return "no se lee como un diálogo: personaje [pose] \"texto\" (revisa las comillas)"
+        return _t("no se lee como un diálogo: personaje [pose] \"texto\" (revisa las comillas)")
     return None
 
 
@@ -356,8 +357,7 @@ def _rewrite_region(lines: List[str], i: int, ch: Change, w: _Window, start: int
     say_now = say_attrs(say)
 
     def refuse(tag: str) -> None:
-        raise _Refuse(f"{ch.file}: la instrucción de «{tag}» ocupa varias líneas o abre un bloque; "
-                      "edítala a mano (PRTT no la toca).")
+        raise _Refuse(_t("{0}: la instrucción de «{1}» ocupa varias líneas o abre un bloque; edítala a mano (PRTT no la toca).", ch.file, tag))
 
     for k in sorted(layout.slots):
         p = layout.slots[k]
@@ -468,8 +468,7 @@ class ScriptWriter:
         path = self.path_of(rel)
         try:
             if expected_mtime is not None and os.stat(path).st_mtime_ns != expected_mtime:
-                return ("el archivo cambió en disco desde que PRTT lo leyó. "
-                        "Pulsa «Recargar .rpy» y vuelve a guardar.")
+                return (_t("el archivo cambió en disco desde que PRTT lo leyó. Pulsa «Recargar .rpy» y vuelve a guardar."))
             with open(path, "rb") as f:
                 data = f.read()
         except OSError as exc:
@@ -478,7 +477,7 @@ class ScriptWriter:
         try:
             text = (data[len(codecs.BOM_UTF8):] if bom else data).decode("utf-8")
         except UnicodeDecodeError:
-            return "no está en UTF-8; no lo modifico."
+            return _t("no está en UTF-8; no lo modifico.")
         eol = "\r\n" if "\r\n" in text else "\n"
         return bom, eol, text.splitlines(keepends=True)      # mismo criterio de líneas que rpy_parser
 
@@ -535,8 +534,7 @@ class ScriptWriter:
             if not 0 <= i < len(lines) or not line_matches(lines[i], ch.raw):
                 results.append(Result(
                     ch.key, False,
-                    f"{rel}:{ch.line}: esa línea ya no coincide con lo que PRTT leyó. "
-                    "Pulsa «Recargar .rpy» y vuelve a guardar."))
+                    _t("{0}:{1}: esa línea ya no coincide con lo que PRTT leyó. Pulsa «Recargar .rpy» y vuelve a guardar.", rel, ch.line)))
                 continue
             try:
                 did = (self._restore(lines, i, ch, rel, journal) if ch.layout is None
@@ -592,8 +590,7 @@ class ScriptWriter:
             orig, new = prev
             s = i - (len(new) - 1)
             if s < 0 or lines[s:i] != new[:-1]:
-                raise _Refuse(f"{rel}:{ch.line}: el script cambió por fuera desde que PRTT lo escribió; "
-                              f"no puedo restaurarlo solo (copia original: {os.path.basename(rel)}{BACKUP_SUFFIX}).")
+                raise _Refuse(_t("{0}:{1}: el script cambió por fuera desde que PRTT lo escribió; no puedo restaurarlo solo (copia original: {2}{3}).", rel, ch.line, os.path.basename(rel), BACKUP_SUFFIX))
             say = orig[-1] if lines[i] == new[-1] else _resync_say(lines[i], orig[-1])
             lines[s:i + 1] = orig[:-1] + [say]
             journal[ch.key] = None
@@ -613,7 +610,7 @@ class ScriptWriter:
         out = []
         for n in line_numbers:
             if not 1 <= n <= len(loaded[2]):
-                raise ValueError(f"{rel}:{n}: la línea ya no existe")
+                raise ValueError(_t("{0}:{1}: la línea ya no existe", rel, n))
             code, comment = split_comment(loaded[2][n - 1])
             out.append((code.strip(), comment))
         return out
@@ -639,12 +636,11 @@ class ScriptWriter:
             i = e.line - 1
             where = f"{rel}:{e.line}"
             if not 0 <= i < len(lines):
-                results.append(Result(e.key, False, f"{where}: la línea ya no existe."))
+                results.append(Result(e.key, False, _t("{0}: la línea ya no existe.", where)))
                 continue
             code, comment = split_comment(lines[i])
             if code.strip() != e.expect.strip():
-                results.append(Result(e.key, False, f"{where}: esa línea ya no es la que PRTT mostró. "
-                                                    "Pulsa «Recargar .rpy» y vuelve a intentarlo."))
+                results.append(Result(e.key, False, _t("{0}: esa línea ya no es la que PRTT mostró. Pulsa «Recargar .rpy» y vuelve a intentarlo.", where)))
                 continue
             problem = validate_say(e.expect) or validate_say(e.new)
             if problem:

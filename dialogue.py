@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
 from typing import Dict, Iterable, List, NamedTuple
+from i18n import _t
 
 from rpy_parser import TOKEN_RE, WORD_RE, ScriptDB, unquote
 
@@ -30,7 +31,7 @@ class DialogueLine:
 
     @property
     def speaker(self) -> str:
-        return self.who or "(narrador)"
+        return self.who or _t("(narrador)")
 
 
 @dataclass
@@ -171,25 +172,23 @@ def validate(p: SayParts, characters: Iterable[str]) -> str:
     """Devuelve un mensaje de error, o una cadena vacía si se puede escribir."""
     chars = set(characters)
     if not p.text.strip():
-        return "Escribe el texto del diálogo."
+        return _t("Escribe el texto del diálogo.")
     speaker = p.speaker.strip()
     if p.temp:
         if not speaker:
-            return "Escribe el nombre temporal del hablante."
+            return _t("Escribe el nombre temporal del hablante.")
         if p.pose.strip():
-            return "Un nombre temporal no admite pose: déjala en blanco."
+            return _t("Un nombre temporal no admite pose: déjala en blanco.")
         return ""
     if not speaker:
-        return "El narrador no admite pose: déjala en blanco." if p.pose.strip() else ""
+        return _t("El narrador no admite pose: déjala en blanco.") if p.pose.strip() else ""
     if not IDENT_RE.match(speaker):
-        return (f"«{speaker}» no es el nombre de un personaje del script. "
-                "Si es un nombre suelto, marca «nombre temporal».")
+        return (_t("«{0}» no es el nombre de un personaje del script. Si es un nombre suelto, marca «nombre temporal».", speaker))
     if speaker not in chars and speaker != "extend":
-        return (f"«{speaker}» no está definido como Character en tus .rpy. "
-                "Elígelo de la lista o marca «nombre temporal».")
+        return (_t("«{0}» no está definido como Character en tus .rpy. Elígelo de la lista o marca «nombre temporal».", speaker))
     for tok in p.pose.split():
         if not WORD_RE.match(tok) or tok in RESERVED:
-            return f"«{tok}» no vale como pose o expresión."
+            return _t("«{0}» no vale como pose o expresión.", tok)
     return ""
 
 
@@ -199,8 +198,8 @@ class Choice(NamedTuple):
     label: str
 
 
-NARRATOR_LABEL = "(narrador)"
-NEW_TEMP_LABEL = "＋ Nombre temporal…"
+NARRATOR_LABEL = _t("(narrador)")
+NEW_TEMP_LABEL = _t("＋ Nombre temporal…")
 
 
 def speaker_label(db, var: str) -> str:
@@ -228,7 +227,7 @@ def temp_names(db) -> List[str]:
 def quick_choices(db) -> List[Choice]:
     """Opciones para el selector rápido de hablante del preview."""
     out = speaker_choices(db)
-    out += [Choice("temp", n, f"“{n}” (temporal)") for n in temp_names(db)]
+    out += [Choice("temp", n, _t("“{0}” (temporal)", n)) for n in temp_names(db)]
     out.append(Choice("new", "", NEW_TEMP_LABEL))
     return out
 

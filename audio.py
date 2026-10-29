@@ -30,6 +30,7 @@ import time
 import wave
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
+from i18n import _t
 
 from rpy_parser import ScriptDB, unquote
 
@@ -79,7 +80,7 @@ class Track:
     @property
     def origin(self) -> str:
         if self.kind == "missing":
-            return "sin definir (tus scripts la usan)"
+            return _t("sin definir (tus scripts la usan)")
         return f"{self.source}:{self.line}" if self.source else ""
 
 
@@ -434,8 +435,8 @@ class Player:
             self._pg = pygame
             self.ok = True
         except Exception as exc:                        # sin pygame o sin dispositivo de audio
-            self.why = ("Para escuchar la vista previa instala pygame-ce:  python -m pip install pygame-ce"
-                        if isinstance(exc, ImportError) else f"No se pudo iniciar el audio: {exc}")
+            self.why = (_t("Para escuchar la vista previa instala pygame-ce:  python -m pip install pygame-ce")
+                        if isinstance(exc, ImportError) else _t("No se pudo iniciar el audio: {0}", exc))
 
     # ------------------------------------------------------------------
     @property
@@ -458,7 +459,7 @@ class Player:
                 start = 0.0
                 pg.mixer.music.play(0)
         except pg.error as exc:
-            return f"No se pudo reproducir: {exc}"
+            return _t("No se pudo reproducir: {0}", exc)
         self._file, self._start, self._t0 = file, max(start, 0.0), time.monotonic()
         self._loop, self._loop_start, self._duration, self._env = loop, loop_start or 0.0, duration, env
         self._active = True

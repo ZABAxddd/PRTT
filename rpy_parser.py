@@ -14,6 +14,7 @@ import os
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Tuple
+from i18n import _t
 
 # --------------------------------------------------------------------------------------
 # Posiciones: txx, hxx, fxx, hfxx, ixx, rxx, lxx, sxx  (+ thide)
@@ -220,7 +221,7 @@ class ScriptDB:
         """
         game_dir = os.path.abspath(game_dir)
         if not os.path.isdir(game_dir):
-            raise FileNotFoundError(f"No existe la carpeta: {game_dir}")
+            raise FileNotFoundError(_t("No existe la carpeta: {0}", game_dir))
         skip = {os.path.normcase(os.path.abspath(p)) for p in exclude_dirs}
         paths: List[str] = []
         for root, dirs, files in os.walk(game_dir):

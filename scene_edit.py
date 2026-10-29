@@ -31,6 +31,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
+from i18n import _t
 
 from rpy_parser import SHOW_STOP, TOKEN_RE, WORD_RE, _scan
 import scenes
@@ -160,7 +161,7 @@ def single_line(phys: str) -> Optional[str]:
 
 def with_code(phys: str, new_code: str) -> str:
     body = phys.rstrip("\r\n")
-    code, _d, _t = _scan(body, 0, None)
+    code, _d, _tail = _scan(body, 0, None)
     comment = body[len(code):].strip()
     return _indent_of(phys) + new_code + (("  " + comment) if comment else "") + _eol_of(phys)
 
@@ -218,16 +219,13 @@ def build_scene_code(name: str, clauses, tail: str) -> str:
 def _check_ref(lines: List[str], ref: SceneRef) -> str:
     i = ref.line - 1
     if not 0 <= i < len(lines):
-        raise SceneError(f"{ref.file}:{ref.line}: esa línea ya no coincide con lo que PRTT leyó. "
-                         "Pulsa «Recargar .rpy» y vuelve a intentarlo.")
+        raise SceneError(_t("{0}:{1}: esa línea ya no coincide con lo que PRTT leyó. Pulsa «Recargar .rpy» y vuelve a intentarlo.", ref.file, ref.line))
     code = single_line(lines[i])
     if code is None or _norm(code.strip()) != _norm(ref.raw):
-        raise SceneError(f"{ref.file}:{ref.line}: esa línea ya no coincide con lo que PRTT leyó. "
-                         "Pulsa «Recargar .rpy» y vuelve a intentarlo.")
+        raise SceneError(_t("{0}:{1}: esa línea ya no coincide con lo que PRTT leyó. Pulsa «Recargar .rpy» y vuelve a intentarlo.", ref.file, ref.line))
     parsed = parse_scene_line(code.strip()) if code is not None else None
     if parsed is None:
-        raise SceneError(f"{ref.file}:{ref.line}: esta instrucción `scene` usa algo que no reescribo con seguridad "
-                         "(bloque ATL, expression, varias líneas...). Edítala a mano en el .rpy.")
+        raise SceneError(_t("{0}:{1}: esta instrucción `scene` usa algo que no reescribo con seguridad (bloque ATL, expression, varias líneas...). Edítala a mano en el .rpy.", ref.file, ref.line))
     return code
 
 
@@ -244,8 +242,7 @@ def _check_next_with(lines: List[str], ref: SceneRef) -> int:
         if (code is not None and _norm(code.strip()) == _norm(expected)
                 and indent == ref.indent):
             return j
-    raise SceneError(f"{ref.file}:{ref.next_with_line}: el `with` de la escena ya no está donde PRTT lo leyó. "
-                     "Pulsa «Recargar .rpy».")
+    raise SceneError(_t("{0}:{1}: el `with` de la escena ya no está donde PRTT lo leyó. Pulsa «Recargar .rpy».", ref.file, ref.next_with_line))
 
 
 def replace_scene(lines: List[str], ref: SceneRef, name: str, effect=KEEP) -> str:
@@ -262,7 +259,7 @@ def replace_scene(lines: List[str], ref: SceneRef, name: str, effect=KEEP) -> st
             del lines[j]
         else:
             lines[j] = with_code(lines[j], f"with {effect}")
-    return f"scene {name}" + ("" if effect is KEEP else f" with {effect}" if effect else " (sin transición)")
+    return f"scene {name}" + ("" if effect is KEEP else f" with {effect}" if effect else _t(" (sin transición)"))
 
 
 def delete_scene(lines: List[str], ref: SceneRef) -> str:
@@ -271,7 +268,7 @@ def delete_scene(lines: List[str], ref: SceneRef) -> str:
     if j >= 0:
         del lines[j]
     del lines[ref.line - 1]
-    return "escena eliminada"
+    return _t("escena eliminada")
 
 
 def add_scene(lines: List[str], where_line: int, name: str, effect: Optional[str], reshow: List[str],
@@ -280,14 +277,14 @@ def add_scene(lines: List[str], where_line: int, name: str, effect: Optional[str
     (personajes que el scene borraría) van debajo y la transición queda en un `with` suelto tras ellos."""
     i = where_line - 1
     if not 0 <= i < len(lines):
-        raise SceneError("la línea del diálogo ya no existe. Pulsa «Recargar .rpy».")
+        raise SceneError(_t("la línea del diálogo ya no existe. Pulsa «Recargar .rpy»."))
     ind = _indent_of(lines[i])
     if reshow:
         body = [f"scene {name}"] + reshow + ([f"with {effect}"] if effect else [])
     else:
         body = [f"scene {name}" + (f" with {effect}" if effect else "")]
     lines[i:i] = [ind + b + eol for b in body]
-    return f"scene {name}" + (f" with {effect}" if effect else "") + (f" + {len(reshow)} personaje(s) vuelven a mostrarse" if reshow else "")
+    return f"scene {name}" + (f" with {effect}" if effect else "") + (_t(" + {0} personaje(s) vuelven a mostrarse", len(reshow)) if reshow else "")
 
 
 def add_definition(lines: List[str], after_line: int, text: str, eol: str = "\n") -> str:
@@ -358,8 +355,7 @@ class SceneWriter:
         path = self.path_of(rel)
         try:
             if expected is not None and os.stat(path).st_mtime_ns != expected:
-                raise SceneError(f"{rel}: el archivo cambió en disco desde que PRTT lo leyó. "
-                                 "Pulsa «Recargar .rpy» y vuelve a intentarlo.")
+                raise SceneError(_t("{0}: el archivo cambió en disco desde que PRTT lo leyó. Pulsa «Recargar .rpy» y vuelve a intentarlo.", rel))
             with open(path, "rb") as f:
                 data = f.read()
         except OSError as exc:
@@ -368,7 +364,7 @@ class SceneWriter:
         try:
             text = (data[len(codecs.BOM_UTF8):] if bom else data).decode("utf-8")
         except UnicodeDecodeError:
-            raise SceneError(f"{rel}: no está en UTF-8; no lo modifico.")
+            raise SceneError(_t("{0}: no está en UTF-8; no lo modifico.", rel))
         eol = "\r\n" if "\r\n" in text else "\n"
         lines = text.splitlines(keepends=True)
         msg = fn(lines, eol)
@@ -416,12 +412,12 @@ class SceneWriter:
 
     def undo(self) -> Tuple[bool, str]:
         if not self._undo:
-            return False, "No hay nada que deshacer."
+            return False, _t("No hay nada que deshacer.")
         group = self._undo[-1]
         for rel, _data, mt in group:                       # solo si nadie tocó el archivo después
             try:
                 if os.stat(self.path_of(rel)).st_mtime_ns != mt:
-                    return False, f"{rel}: cambió después de escribirlo; no lo deshago para no pisar tus cambios."
+                    return False, _t("{0}: cambió después de escribirlo; no lo deshago para no pisar tus cambios.", rel)
             except OSError as exc:
                 return False, str(exc)
         try:
@@ -436,7 +432,7 @@ class SceneWriter:
             except OSError:
                 continue
             self._undo = [[(r, d, now if r == rel else m) for r, d, m in g] for g in self._undo]
-        return True, "Cambio de escenario deshecho."
+        return True, _t("Cambio de escenario deshecho.")
 
 
 @dataclass
@@ -462,8 +458,7 @@ def build_context(db, frame, find_image: Optional[Callable[[str], object]] = Non
     current, previous = find_scenes(db, frame)
     notes = []
     if current is None:
-        notes.append("Este diálogo no tiene ninguna instrucción `scene` antes dentro de su label: "
-                     "solo se puede AGREGAR una.")
+        notes.append(_t("Este diálogo no tiene ninguna instrucción `scene` antes dentro de su label: solo se puede AGREGAR una."))
     return Context(f"{frame.event.label} · {frame.event.where}", current, previous,
                    scenes.collect_backgrounds(db, include_all),
                    transitions.collect_transitions(db, find_image), notes)
@@ -492,11 +487,11 @@ class SceneController:
 
         try:
             if effect is not KEEP and effect is not None and not isinstance(effect, str):
-                raise SceneError("transición no válida")
+                raise SceneError(_t("transición no válida"))
             if op in ("replace", "delete") and current is None:
-                raise SceneError("No hay ninguna instrucción `scene` que mande en este diálogo.")
+                raise SceneError(_t("No hay ninguna instrucción `scene` que mande en este diálogo."))
             if op in ("replace", "add") and bg is None:
-                raise SceneError("Elige un fondo.")
+                raise SceneError(_t("Elige un fondo."))
             if op == "replace":
                 step(current.file, lambda lines, eol: replace_scene(lines, current, bg.name, effect))
             elif op == "add":
@@ -508,12 +503,12 @@ class SceneController:
             elif op == "delete":
                 step(current.file, lambda lines, eol: delete_scene(lines, current))
             else:
-                raise SceneError(f"operación desconocida: {op}")
+                raise SceneError(_t("operación desconocida: {0}", op))
             full = False
             if op != "delete" and bg.new:
                 site, _line = definition_site(db)
                 if not site:
-                    raise SceneError("No encuentro ningún `image` en tus .rpy donde escribir la definición del color.")
+                    raise SceneError(_t("No encuentro ningún `image` en tus .rpy donde escribir la definición del color."))
                 text = scenes.definition_line(bg)
                 step(site, lambda lines, eol: add_bg_definition(lines, text, eol))
                 full = True
@@ -523,10 +518,9 @@ class SceneController:
         if not ok:
             return False, msg, False
         if op == "add" and any(e.kind == "scene" and not e.data.get("onlayer") for e in frame.actions):
-            msg += (" Ojo: este diálogo ya tenía un `scene` justo antes; el anterior solo se verá un instante. "
-                    "Si lo que querías es cambiar su fondo, usa «Reemplazar».")
+            msg += (_t(" Ojo: este diálogo ya tenía un `scene` justo antes; el anterior solo se verá un instante. Si lo que querías es cambiar su fondo, usa «Reemplazar»."))
         if op == "delete":
-            back = f" Vuelve a mandar «{previous.name}» ({previous.file}:{previous.line})." if previous else \
-                " No queda ninguna escena anterior en este label."
+            back = _t(" Vuelve a mandar «{0}» ({1}:{2}).", previous.name, previous.file, previous.line) if previous else \
+                _t(" No queda ninguna escena anterior en este label.")
             msg += back
         return True, msg, full

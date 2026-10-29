@@ -17,6 +17,7 @@ import ast
 import os
 import re
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from i18n import _t
 
 if TYPE_CHECKING:
     from PIL import Image as PILImage
@@ -86,7 +87,7 @@ def _pos(v: float, size: float) -> float:
 class Preview:
     def __init__(self, db, game_dir: str, book: Optional[SpriteBook] = None) -> None:
         if not HAVE_PIL:
-            raise RuntimeError("Falta Pillow: instala con  py -3 -m pip install pillow")
+            raise RuntimeError(_t("Falta Pillow: instala con  py -3 -m pip install pillow"))
         self.db = db
         self.game_dir = os.path.abspath(game_dir)
         self.book = book or SpriteBook(db, game_dir)
@@ -140,7 +141,7 @@ class Preview:
             except TypeError:
                 font = ImageFont.load_default()
         if not real:
-            msg = f"no encuentro la fuente '{path}': uso una de reserva (el texto no será igual al juego)"
+            msg = _t("no encuentro la fuente '{0}': uso una de reserva (el texto no será igual al juego)", path)
             self._font_warn[key] = msg
             self._warn(msg)
         self._fonts[key] = font
@@ -167,7 +168,7 @@ class Preview:
             toks = name.split()
             alt = self.book.find_name(toks[0], toks[1:]) if toks else None
             if alt is None:
-                self._warn(f"no hay 'image {name}' en tus .rpy")
+                self._warn(_t("no hay 'image {0}' en tus .rpy", name))
                 return None
             name = alt
         expr = images[name]
@@ -207,7 +208,7 @@ class Preview:
         if os.path.splitext(s)[1].lower() in IMG_EXT or "/" in s:
             img = self._load_file(s)
             if img is None:
-                self._warn(f"no encuentro el archivo de imagen '{s}'")
+                self._warn(_t("no encuentro el archivo de imagen '{0}'", s))
                 return None
             return img, "topleft"
         return self._displayable(s, depth + 1)
@@ -235,7 +236,7 @@ class Preview:
 
         s = walk(nodes)
         if s is None:
-            self._warn(f"image {name}: su ATL no muestra ninguna imagen que yo entienda")
+            self._warn(_t("image {0}: su ATL no muestra ninguna imagen que yo entienda", name))
             return None
         res = self._from_string(s, depth + 1)
         if res is None:
@@ -246,7 +247,7 @@ class Preview:
         res = self.displayable(name)
         if res is None:
             ImageDraw.Draw(canvas, "RGBA").rectangle((0, 0, W, H), fill=(36, 36, 44, 255))
-            self._label(canvas, f"{label}: {name}\n(sin imagen)", (24, 24))
+            self._label(canvas, _t("{0}: {1}\n(sin imagen)", label, name), (24, 24))
             return
         img, place = res
         x, y = ((W - img.width) // 2, (H - img.height) // 2) if place == "center" else (0, 0)
@@ -271,20 +272,20 @@ class Preview:
     def actor_image(self, actor: Actor):
         name = self.book.find_name(actor.tag, actor.attrs)
         if name is None:
-            self._warn(f"no hay 'image {actor.image}' en tus .rpy")
-            return self._placeholder(actor.image, "sin definición")
+            self._warn(_t("no hay 'image {0}' en tus .rpy", actor.image))
+            return self._placeholder(actor.image, _t("sin definición"))
         try:
             img, missing = self.book.compose(name)
         except SpriteError as exc:
             self._warn(f"{name}: {exc}")
-            return self._placeholder(name, "sin imagen")
+            return self._placeholder(name, _t("sin imagen"))
         for m in missing:
-            self._warn(f"{name}: falta la capa {m}")
+            self._warn(_t("{0}: falta la capa {1}", name, m))
         return img
 
     def _fallback_state(self, name: str) -> Dict[str, float]:
         pos = parse_position(name)
-        self._warn(f"no encuentro el transform '{name}' (transforms.rpy): uso la posición estándar")
+        self._warn(_t("no encuentro el transform '{0}' (transforms.rpy): uso la posición estándar", name))
         s = dict(DEFAULT_STATE)
         x = FALLBACK_X.get(f"{pos.count}{pos.slot}", 640) if pos else 640
         zoom = 0.8 * (1.05 if pos and pos.motion in ("focus", "hop_focus") else 1.0)
@@ -542,7 +543,7 @@ class Preview:
         if tb is not None:
             paste_rgba(canvas, tb, int(round((W - tb.width) / 2)), int(round(win_top + win_h - tb.height)))
         else:
-            self._warn(f"no encuentro {g.textbox_img}: dibujo una caja de reemplazo")
+            self._warn(_t("no encuentro {0}: dibujo una caja de reemplazo", g.textbox_img))
             draw.rounded_rectangle((0, win_top, W, win_top + win_h), radius=12, fill=(255, 255, 255, 120))
 
         if label:
@@ -557,7 +558,7 @@ class Preview:
             if nb is not None:
                 paste_rgba(canvas, nine_slice(nb, (bw, bh), g.namebox_borders), int(round(left)), int(round(top)))
             else:
-                self._warn(f"no encuentro {g.namebox_img}: dibujo una caja de reemplazo")
+                self._warn(_t("no encuentro {0}: dibujo una caja de reemplazo", g.namebox_img))
                 draw.rounded_rectangle((left, top, left + bw, top + bh), radius=8, fill=(187, 85, 153, 235))
             inner_w, inner_h = bw - bl - br, bh - bt - bb
             tx = left + bl + (inner_w - tw) * g.name_xalign

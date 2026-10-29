@@ -20,6 +20,7 @@ import math
 import operator
 import re
 from typing import Dict, List, Optional, Sequence, Tuple
+from i18n import _t
 
 SCREEN_W, SCREEN_H = 1280, 720
 
@@ -71,7 +72,7 @@ def safe_eval(expr: str, names: Optional[Dict[str, object]] = None):
     try:
         node = ast.parse(expr.strip(), mode="eval").body
     except SyntaxError as exc:
-        raise ATLError(f"expresión ilegible: {expr!r}") from exc
+        raise ATLError(_t("expresión ilegible: {0!r}", expr)) from exc
     return _ev(node, names)
 
 
@@ -79,11 +80,11 @@ def _ev(n: ast.AST, names: Dict[str, object]):
     if isinstance(n, ast.Constant):
         if isinstance(n.value, (int, float, str, bool)) or n.value is None:
             return n.value
-        raise ATLError("constante no soportada")
+        raise ATLError(_t("constante no soportada"))
     if isinstance(n, ast.Name):
         if n.id in names and names[n.id] is not None:
             return names[n.id]
-        raise ATLError(f"nombre desconocido: {n.id}")
+        raise ATLError(_t("nombre desconocido: {0}", n.id))
     if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.USub, ast.UAdd)):
         v = _ev(n.operand, names)
         return -v if isinstance(n.op, ast.USub) else +v
@@ -91,10 +92,10 @@ def _ev(n: ast.AST, names: Dict[str, object]):
         try:
             return _BIN[type(n.op)](_ev(n.left, names), _ev(n.right, names))
         except (ZeroDivisionError, TypeError, OverflowError) as exc:
-            raise ATLError("operación inválida") from exc
+            raise ATLError(_t("operación inválida")) from exc
     if isinstance(n, (ast.Tuple, ast.List)):
         return tuple(_ev(e, names) for e in n.elts)
-    raise ATLError("expresión no soportada")
+    raise ATLError(_t("expresión no soportada"))
 
 
 def split_commas(text: str) -> List[str]:
