@@ -1,6 +1,10 @@
 @echo off
-REM PRTT - doble clic para abrir. Requiere Python 3.8 o superior instalado.
+REM PRTT portable: el paquete incluye el ejecutable y Python.
 cd /d "%~dp0"
+if exist "%~dp0PRTT.exe" (
+    "%~dp0PRTT.exe" %*
+    goto end
+)
 if defined VIRTUAL_ENV if exist "%VIRTUAL_ENV%\Scripts\python.exe" (
     "%VIRTUAL_ENV%\Scripts\python.exe" prtt.py %*
     goto end

@@ -21,7 +21,18 @@ import os
 import sys
 from typing import Dict, List, Optional, Sequence
 
-TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
+def _tool_dir() -> str:
+    if not getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(__file__))
+    executable_dir = os.path.dirname(os.path.abspath(sys.executable))
+    if sys.platform == "darwin":
+        app_bundle = os.path.dirname(os.path.dirname(executable_dir))
+        if app_bundle.endswith(".app"):
+            return os.path.dirname(app_bundle)
+    return executable_dir
+
+
+TOOL_DIR = _tool_dir()
 sys.path.insert(0, TOOL_DIR)
 
 import rpy_parser  # noqa: E402

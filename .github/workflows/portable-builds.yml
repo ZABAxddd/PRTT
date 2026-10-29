@@ -1,0 +1,89 @@
+name: Portable builds
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x86_64
+            runner: windows-2022
+          - target: linux-x86_64
+            runner: ubuntu-22.04
+          - target: linux-arm64
+            runner: ubuntu-22.04-arm
+          - target: macos-x86_64
+            runner: macos-15-intel
+          - target: macos-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        if: runner.os != 'Linux'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config python3-venv python3-tk \
+            python3-dev tk-dev tcl-dev \
+            libasound2-dev libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev \
+            libsdl2-ttf-dev libportmidi-dev libfreetype6-dev libjpeg-dev
+
+      - name: Create build environment
+        shell: bash
+        run: |
+          python3 -m venv .build-venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "BUILD_PYTHON=.build-venv/Scripts/python.exe" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_PYTHON=.build-venv/bin/python" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install application and build dependencies
+        shell: bash
+        run: $BUILD_PYTHON -m pip install -r requirements-build.txt
+
+      - name: Build portable ZIP
+        shell: bash
+        run: $BUILD_PYTHON packaging/build_portable.py --target "${{ matrix.target }}"
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: PRTT-${{ matrix.target }}
+          path: dist/PRTT-${{ matrix.target }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: PRTT-*
+          path: release-assets
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*.zip

@@ -16,7 +16,7 @@ DURACIÓN Y ONDA (sin instalar nada para lo básico)
   · duración: .ogg/.opus (se lee del propio archivo), .wav, .mp3 (aproximada); con `mutagen` instalado, cualquiera;
   · onda: .wav sin instalar nada; .ogg/.mp3 con `soundfile` (+numpy) o con `pygame`. Sin eso la gráfica se
     dibuja igual (línea de tiempo, bucle, fades), solo que sin la onda.
-  · escuchar: necesita `pygame` (py -3 -m pip install pygame). Con él hay fade-in/fade-out reales en la vista previa.
+  · escuchar: necesita `pygame-ce` (py -3 -m pip install pygame-ce). Con él hay fade-in/fade-out reales en la vista previa.
 
 No depende de Tkinter.
 """

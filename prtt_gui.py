@@ -40,7 +40,14 @@ try:
 except ImportError:
     HAVE_TKIMG = False
 
-TOOL_DIR = os.path.dirname(os.path.abspath(__file__))   # PRTT se ignora a sí mismo al releer /game
+if getattr(sys, "frozen", False):
+    _executable_dir = os.path.dirname(os.path.abspath(sys.executable))
+    _app_bundle = os.path.dirname(os.path.dirname(_executable_dir))
+    TOOL_DIR = (os.path.dirname(_app_bundle)
+                if sys.platform == "darwin" and _app_bundle.endswith(".app")
+                else _executable_dir)
+else:
+    TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 AUTOSAVE_DEFAULT = True        # auto-guardado activado al abrir
 AUTOSAVE_DELAY_MS = 4000       # se guarda tras este tiempo SIN nuevos cambios
 POSE_PICKER_MIN_SIZE = (950, 560)

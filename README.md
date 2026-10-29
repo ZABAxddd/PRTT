@@ -4,11 +4,12 @@
 
 Selecciona un diálogo, abre la vista previa y trabaja directamente con las celdas de personajes: agrega o cambia personajes, elige poses y expresiones, mueve sus posiciones y ajusta sus efectos. Cuando termines, PRTT puede escribir la disposición en el archivo `.rpy` correspondiente.
 
-> PRTT es una aplicación independiente para Windows. No se instala dentro del juego como un mod activable desde el menú de DDLC; se coloca junto a los scripts del mod para leerlos y guardar los cambios.
+> PRTT es una aplicación independiente; no se instala dentro del juego como un mod activable desde el menú de DDLC. Se coloca junto a los scripts del mod para leerlos y guardar los cambios.
 
 ## Contenido
 
 - [Qué puedes hacer](#qué-puedes-hacer)
+- [Descarga portable (sin Python)](#descarga-portable-sin-python)
 - [Requisitos](#requisitos)
 - [Instalar PRTT en tu mod](#instalar-prtt-en-tu-mod)
 - [Organización del código](#organización-del-código)
@@ -54,20 +55,28 @@ La colocación gráfica de personajes es el propósito central de PRTT; las herr
 
 ## Requisitos
 
-- **Windows**.
-- Python **3.8 o posterior**.
-- Tkinter, incluido en el instalador oficial de Python para Windows. Si instalas Python manualmente, selecciona **tcl/tk and IDLE**.
-- **Pillow**, necesario para componer sprites y mostrar previews gráficas.
-- **pygame-ce**, necesario para escuchar la música en la ventana «Música» (`python -m pip install -r requirements-audio.txt`).
+- Para usar la **versión portable**: Windows x64, Linux x86_64/ARM64 o macOS Intel/Apple Silicon. No necesitas instalar Python ni sus bibliotecas.
+- Para ejecutar el **código fuente**: Python **3.8 o posterior**, Tkinter y las dependencias indicadas debajo. En Windows, Tkinter viene con el instalador oficial de Python si seleccionas **tcl/tk and IDLE**.
 - Los scripts `.rpy` del mod y los recursos de imagen de los personajes que quieras previsualizar.
 
-Instala Pillow desde PowerShell o Símbolo del sistema:
+### Descarga portable (sin Python)
+
+1. Descarga el ZIP de tu sistema desde [Releases de PRTT](https://github.com/ZABAxddd/PRTT/releases/latest): `PRTT-windows-x86_64.zip`, `PRTT-linux-x86_64.zip`, `PRTT-linux-arm64.zip`, `PRTT-macos-x86_64.zip` o `PRTT-macos-arm64.zip`.
+2. Extrae la carpeta `PRTT` dentro de la carpeta `game` de tu mod.
+3. En Windows, abre `PRTT.bat`. En Linux o macOS, abre una terminal en `PRTT` y ejecuta `./PRTT.sh`.
+
+Cada ZIP contiene el ejecutable de PRTT, Python y sus dependencias. En macOS, Gatekeeper puede mostrar una advertencia porque la aplicación no está firmada ni notarizada; descarga solo las versiones publicadas en el repositorio oficial.
+El workflow del repositorio construye los cinco ZIP; los publica en **Releases** cuando se crea una etiqueta `v*`.
+
+### Ejecutar desde el código fuente
+
+Instala Pillow y pygame-ce en el mismo Python con el que iniciarás PRTT:
 
 ```powershell
-py -3 -m pip install pillow
+py -3 -m pip install -r requirements-runtime.txt
 ```
 
-Si ejecutas PRTT con un entorno virtual, actívalo antes de instalar pygame-ce para que el lanzador use ese mismo entorno.
+Pillow permite componer sprites; pygame-ce añade la reproducción de audio. NumPy y SoundFile mejoran la lectura de ondas y metadatos de audio. Para solo probar el reproductor, puedes instalar pygame-ce mediante `py -3 -m pip install -r requirements-audio.txt`.
 
 ## Instalar PRTT en tu mod
 
@@ -95,7 +104,7 @@ Si ejecutas PRTT con un entorno virtual, actívalo antes de instalar pygame-ce p
    py -3 check_install.py
    ```
 
-4. Si el comprobador informa que Pillow no está instalado, ejecuta el comando indicado en [Requisitos](#requisitos).
+4. Si ejecutas desde el código fuente y el comprobador informa que Pillow no está instalado, instala las dependencias indicadas en [Requisitos](#requisitos). La versión portable ya las incluye.
 
 Por defecto, PRTT lee los scripts `.rpy` de la carpeta `game` que contiene a `PRTT` y excluye sus propios archivos. Por eso, **no coloques `PRTT` en la carpeta raíz del juego ni dentro de otra carpeta distinta de `game`**.
 
@@ -115,13 +124,13 @@ Mantén estos módulos junto a `PRTT.bat`; la herramienta los importa al iniciar
 
 ## Iniciar la herramienta
 
-En Windows, haz doble clic en:
+En Windows, para la versión portable, haz doble clic en:
 
 ```text
 game\PRTT\PRTT.bat
 ```
 
-También puedes abrir una terminal en `game\PRTT` y ejecutar:
+Para ejecutar el código fuente, abre una terminal en `game\PRTT` y ejecuta:
 
 ```powershell
 py -3 prtt.py
@@ -167,7 +176,7 @@ El botón **🎵 Música…** (pestañas Diálogos y Preview) abre una ventana p
 - Muestra la misma gráfica con la curva de **Fade-out** y escribe `stop music fadeout 1.0`. La línea roja indica en qué momento de la canción cae el stop (solo afecta a la vista previa).
 - Al agregar o reemplazar un `stop music`, PRTT averigua qué pista está deteniendo (la última `play music` anterior en el label) y la muestra y usa en la gráfica. Si no hay ninguna, o ya la detuvo otro `stop`, lo avisa. La opción *Anotar en el script qué pista detiene* añade `# detiene: Título` a la línea (apagada por defecto).
 
-**Escuchar.** Para oír la vista previa, con fade-in, fade-out y bucle, instala `pygame` (`py -3 -m pip install pygame`). Sin él, la gráfica y la escritura funcionan igual. La duración se lee de los `.ogg`, `.wav` y `.mp3` sin instalar nada, y la forma de onda de los `.wav`; para ver la onda de `.ogg` o `.mp3` hace falta `pygame` o `soundfile` (con `numpy`). Si los audios siguen dentro de un `.rpa`, extráelos primero.
+**Escuchar.** Para ejecutar desde el código fuente y oír la vista previa con fade-in, fade-out y bucle, instala pygame-ce (`py -3 -m pip install -r requirements-audio.txt`). La versión portable ya incluye el reproductor. Sin pygame-ce, la gráfica y la escritura funcionan igual. La duración se lee de los `.ogg`, `.wav` y `.mp3` sin instalar nada, y la forma de onda de los `.wav`; para ver la onda de `.ogg` o `.mp3` hace falta pygame-ce o SoundFile (con NumPy). Si los audios siguen dentro de un `.rpa`, extráelos primero.
 
 Los cambios usan las mismas protecciones que el resto de PRTT: copia `.prtt-bak`, escritura atómica, aviso si el archivo cambió fuera y **Deshacer último cambio** en la propia ventana.
 
@@ -181,12 +190,17 @@ Los cambios usan las mismas protecciones que el resto de PRTT: copia `.prtt-bak`
 
 ## Solución de problemas
 
-### PRTT no se inicia
+### PRTT portable no se inicia
+
+- Comprueba que extrajiste todo el ZIP, no solo el lanzador.
+- En Windows, ejecuta `PRTT.bat` desde `game\PRTT`; si aparece un error, continúa con [Ejecutar desde el código fuente](#ejecutar-desde-el-código-fuente) para mostrarlo en la terminal.
+- En Linux/macOS, confirma que descargaste el ZIP de la arquitectura correcta y ejecuta `./PRTT.sh`.
+
+### PRTT desde el código fuente no se inicia
 
 - Comprueba que Python 3.8 o posterior está instalado.
 - Ejecuta `py -3 prtt.py` desde `game\PRTT` para ver errores en la terminal.
 - Si Tkinter no está disponible, modifica la instalación de Python e incluye **tcl/tk and IDLE**.
-
 ### No aparecen las previews de personajes
 
 - Instala Pillow con `py -3 -m pip install pillow`.
