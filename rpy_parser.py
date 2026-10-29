@@ -499,7 +499,7 @@ class ScriptDB:
                     d[key].append(rest[ms[first].start():ms[i - 1].end()])
                 continue
             if t in ("as", "onlayer", "with", "zorder") and i + 1 < len(toks):
-                val = toks[i + 1]
+                val = _after(toks[i:], "with") if t == "with" else toks[i + 1]
                 if t == "zorder":
                     try:
                         d["zorder"] = int(val)
@@ -507,7 +507,19 @@ class ScriptDB:
                         d["zorder"] = None
                 else:
                     d[{"as": "as", "onlayer": "onlayer", "with": "with"}[t]] = val
-                i += 2
+                if t == "with" and i + 2 < len(toks) and toks[i + 2] == "(":
+                    depth = 0
+                    while i + 1 < len(toks):
+                        i += 1
+                        if toks[i] == "(":
+                            depth += 1
+                        elif toks[i] == ")":
+                            depth -= 1
+                            if depth == 0:
+                                i += 1
+                                break
+                else:
+                    i += 2
                 continue
             i += 1
         d["positions"] = [asdict(p) for p in (parse_position(n) for n in d["at"]) if p]
@@ -604,6 +616,17 @@ def _after(toks: List[str], keyword: str) -> Optional[str]:
     if keyword in toks:
         i = toks.index(keyword)
         if i + 1 < len(toks):
+            if i + 2 < len(toks) and toks[i + 2] == "(":
+                depth = 0
+                expr = []
+                for token in toks[i + 1:]:
+                    expr.append(token)
+                    if token == "(":
+                        depth += 1
+                    elif token == ")":
+                        depth -= 1
+                        if depth == 0:
+                            return " ".join(expr)
             return toks[i + 1]
     return None
 

@@ -11,8 +11,9 @@ REEMPLAZO INTELIGENTE (posiciones)
       · si no, se inserta una línea nueva justo después de la última instrucción show/hide/scene de la
         ventana (o encima del diálogo si no hay ninguna).
   Los personajes que ya no están:
-      · con `show` en la ventana: la línea pasa a `hide <tag>` si ya estaba en escena antes, o se
-        BORRA si el show era quien lo metía;
+      · si ya estaban en escena y tienen un `show ... at [transform on hide]`, se conserva el show
+        y su `hide` para reproducir la salida; si eran una adición nueva, se borra el par;
+      · en otros casos se reutiliza/inserta el `hide` o se borra el show nuevo;
       · sin él: se inserta `hide <tag>` (salvo que ya haya uno).
   Volver a guardar el mismo diálogo reemplaza las mismas líneas: nunca se duplica nada.
   Un personaje cuyo estado (pose, zorder, transform) ya es EXACTAMENTE el que traía de un diálogo
@@ -60,6 +61,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import cells
+from atl import TransformLib
 from cells import CellLayout
 from rpy_parser import ScriptDB
 
@@ -77,6 +79,8 @@ class Stmt:
     raw: str           # texto lógico leído por el parser
     kind: str          # scene, show, hide, with, play...
     tag: str = ""      # personaje (solo show/hide; "" si lleva `as`)
+    zorder: int = 0
+    at: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -92,6 +96,8 @@ class Change:
     before: Set[str] = field(default_factory=set)       # personajes en escena ANTES de la ventana
     speaker: str = ""                                    # tag del personaje que habla en este diálogo
     before_state: Dict[str, tuple] = field(default_factory=dict)   # tag -> (poses, zorder, at) antes de la ventana
+    hide_effects: List[str] = field(default_factory=list)  # personajes cuyo transform requiere `hide`
+    script_hide_effects: List[str] = field(default_factory=list)  # transforms de salida ya escritos en esta ventana
 
 
 @dataclass
@@ -119,21 +125,43 @@ def make_change(key, frame, layout: Optional[CellLayout], prev_frame=None, db=No
         if a.file != ev.file:
             continue
         tag = ""
-        if a.kind == "show" and not a.data.get("as"):
-            tag = a.data.get("tag", "")
+        if a.kind == "show":
+            tag = a.data.get("as") or a.data.get("tag", "")
         elif a.kind == "hide":
             tag = a.data.get("tag", "")
-        window.append(Stmt(a.line, a.raw, a.kind, tag))
+        window.append(Stmt(a.line, a.raw, a.kind, tag, a.data.get("zorder") or 0,
+                           tuple(a.data.get("at", ()))))
     new_scene = any(a.kind == "scene" and not a.data.get("onlayer") for a in frame.actions)
     before = set() if (new_scene or prev_frame is None) else set(prev_frame.stage.actors)
-    hide = cells.hide_list(frame.stage, layout) if layout is not None else []
+    hide = []
+    if layout is not None:
+        wanted = {p.tag for p in layout.slots.values()}
+        hide = list(dict.fromkeys(
+            cells.hide_list(frame.stage, layout) +
+            [tag for tag in before if tag not in wanted]
+        ))
+    hide_effects = []
+    script_hide_effects = []
+    if layout is not None and db is not None:
+        lib = TransformLib(db.transform_defs)
+        hide_effects = [p.tag for slot, p in layout.slots.items()
+                        if lib.has_event(layout.at_of(slot), "hide")]
+    if db is not None:
+        lib = TransformLib(db.transform_defs)
+        for action in frame.actions:
+            if action.kind == "show" and any(
+                    lib.has_event(transform, "hide") for transform in action.data.get("at", ())):
+                tag = action.data.get("as") or action.data.get("tag", "")
+                if tag and tag not in script_hide_effects:
+                    script_hide_effects.append(tag)
     state: Dict[str, tuple] = {}
     if prev_frame is not None and not new_scene:
         pl = cells.layout_from_stage(prev_frame.stage)
         state = {p.tag: (tuple(p.attrs), p.zorder, pl.at_of(k)) for k, p in pl.slots.items()}
     who = ev.data.get("who", "")
     speaker = (db.image_tag_of(who) if db is not None and who else "") or ""
-    return Change(key, ev.file, ev.line, ev.raw, layout, hide, window, before, speaker, state)
+    return Change(key, ev.file, ev.line, ev.raw, layout, hide, window, before, speaker, state,
+                  hide_effects, script_hide_effects)
 
 
 # --------------------------------------------------------------------------------------
@@ -282,6 +310,7 @@ class _Refuse(Exception):
 class _Window:
     start: int
     show_idx: Dict[str, int]
+    show_state: Dict[str, Tuple[int, str]]
     hide_idx: Dict[str, int]
     blocked: Set[str]
     anchor: Optional[int]
@@ -289,7 +318,7 @@ class _Window:
 
 def _analyze(lines: List[str], i: int, ch: Change) -> _Window:
     indent = indent_of(lines[i])
-    w = _Window(i, {}, {}, set(), None)
+    w = _Window(i, {}, {}, {}, set(), None)
     for st in sorted(ch.window, key=lambda s: s.line):
         idx = st.line - 1
         if not 0 <= idx < i:
@@ -305,6 +334,7 @@ def _analyze(lines: List[str], i: int, ch: Change) -> _Window:
         w.anchor = idx if w.anchor is None else max(w.anchor, idx)
         if st.kind == "show" and st.tag:
             w.show_idx[st.tag] = idx
+            w.show_state[st.tag] = (st.zorder, ", ".join(st.at))
         elif st.kind == "hide" and st.tag:
             w.hide_idx[st.tag] = idx
     if w.start > 0 and lines[w.start - 1].strip() == BEGIN:
@@ -321,6 +351,7 @@ def _rewrite_region(lines: List[str], i: int, ch: Change, w: _Window, start: int
     dele: Set[int] = set()
     ins_hide: List[str] = []
     ins_show: List[str] = []
+    ins_exit_hide: List[str] = []
     say = lines[i]
     say_now = say_attrs(say)
 
@@ -338,7 +369,11 @@ def _rewrite_region(lines: List[str], i: int, ch: Change, w: _Window, start: int
         pose = prior is None or prior[0] != tuple(p.attrs)
         speaker = bool(ch.speaker) and p.tag == ch.speaker
         s_idx, h_idx = w.show_idx.get(p.tag), w.hide_idx.get(p.tag)
-        if h_idx is not None and (s_idx is None or h_idx > s_idx):
+        exits = p.tag in ch.hide_effects
+        script_state = w.show_state.get(p.tag)
+        if s_idx is not None and script_state is not None:
+            full = full or script_state != (p.zorder, at)
+        if h_idx is not None and (s_idx is None or h_idx > s_idx) and not exits:
             dele.add(h_idx)                                # un hide posterior anularía el show que queremos
         if s_idx is not None:                              # ya hay un show aquí: se REEMPLAZA esa línea
             code, comment = split_comment(lines[s_idx])
@@ -360,21 +395,44 @@ def _rewrite_region(lines: List[str], i: int, ch: Change, w: _Window, start: int
             fixed = set_say_attrs(say, p.attrs)            # su línea de diálogo ya llevaba pose: se sincroniza
             if fixed is not None:
                 say = fixed
+        if exits and (h_idx is None or s_idx is None or h_idx <= s_idx):
+            if h_idx is not None:
+                dele.add(h_idx)
+            ins_exit_hide.append(indent + f"hide {p.tag}" + _tail("", comments) + eol)
     for tag in ch.hide:
         if tag in w.blocked:
             refuse(tag)
         s_idx = w.show_idx.get(tag)
-        if s_idx is not None:
+        h_idx = w.hide_idx.get(tag)
+        if s_idx is not None and tag in ch.script_hide_effects:
             if tag in ch.before:
+                if h_idx is not None and h_idx > s_idx:
+                    continue                                # mantiene el show de salida y su hide
+                if h_idx is not None:
+                    dele.add(h_idx)                        # un hide anterior no sirve para esta salida
+                ins_exit_hide.append(indent + f"hide {tag}" + _tail("", comments) + eol)
+            else:
+                dele.add(s_idx)                            # se añadía y quitaba en el mismo bloque
+                if h_idx is not None and h_idx > s_idx:
+                    dele.add(h_idx)
+            continue
+        if s_idx is not None:
+            if tag in ch.before and h_idx is not None and h_idx > s_idx:
+                dele.add(s_idx)
+            elif tag in ch.before:
                 code, comment = split_comment(lines[s_idx])
                 wm = re.search(r"\swith\s+(\S.*)$", code)
                 repl[s_idx] = (indent_of(lines[s_idx]) + f"hide {tag}" +
                                (f" with {wm.group(1).strip()}" if wm else "") + _tail(comment, comments) + eol)
             else:
                 dele.add(s_idx)                            # el show era quien lo metía: sobra
-        elif tag not in w.hide_idx:
+                if h_idx is not None:
+                    dele.add(h_idx)
+        elif tag in ch.before and h_idx is None:
             ins_hide.append(indent + f"hide {tag}" + _tail("", comments) + eol)
-    ins = ins_hide + ins_show
+        elif tag not in ch.before and h_idx is not None:
+            dele.add(h_idx)
+    ins = ins_hide + ins_show + ins_exit_hide
 
     out: List[str] = []
     for idx in range(start, i):

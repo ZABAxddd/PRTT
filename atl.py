@@ -438,6 +438,11 @@ class TransformLib:
         return any(n[0] == "block" and n[1].split()[:1] == ["on"]
                    and event in [e.strip() for e in n[1][2:].split(",")] for n in self._tree(name))
 
+    def has_event(self, text: str, event: str) -> bool:
+        """Indica si algún transform de una expresión `at` define el evento ATL indicado."""
+        return any(name in self.defs and self._has_on(name, event)
+                   for name, _args, _kwargs in self.parse_expr(text))
+
     def _chain(self, text: str, event: str) -> List[Ops]:
         items = [(n, a, k) for n, a, k in self.parse_expr(text) if n in self.defs]
         if event == "hide":                       # sin `on hide` el personaje simplemente desaparece

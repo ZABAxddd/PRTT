@@ -20,11 +20,12 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import cells
 import rpy_parser
-import say_edit
+import dialogue
 import tfcatalog
-import scene_ctl
+import scene_edit
 import scene_gui
 import rpy_writer
+import transitions
 from ui_layout import fit_window
 from dialogue import DialogueLine, build_index, count_lines, search
 from history import EditHistory
@@ -152,7 +153,7 @@ class DialogueBrowser(tk.Tk):
         self._write_comments = tk.BooleanVar(value=bool(self._settings.get("write_comments", False)))
         self.writer = rpy_writer.ScriptWriter(game_dir, comments=self._write_comments.get())
         self.hist = EditHistory()                         # deshacer / rehacer / cambios sin guardar
-        self._scene_ctl = scene_ctl.SceneController(game_dir)   # escribe las instrucciones `scene` (selector de escenarios)
+        self._scene_controller = scene_edit.SceneController(game_dir)
         self._scene_key = None                            # (label, nº) del diálogo con el que se abrió el selector
         self._mtimes = {}                  # archivo -> fecha de modificación cuando PRTT lo leyó
         self._autosave_job = None
@@ -387,6 +388,7 @@ class DialogueBrowser(tk.Tk):
         self._pv_warn.pack(fill="x", padx=8, pady=(4, 8))
         self._pv_canvas.bind("<Configure>", lambda e: self._pv_redraw())
         self._pv_canvas.bind("<Button-1>", self._pv_press)
+        self._pv_canvas.bind("<Button-3>", self._pv_right_click)
         self._pv_canvas.bind("<B1-Motion>", self._pv_motion)
         self._pv_canvas.bind("<ButtonRelease-1>", self._pv_release)
         self._pv_canvas.bind("<Double-Button-1>", self._pv_double)
@@ -451,21 +453,34 @@ class DialogueBrowser(tk.Tk):
         self._pv_status.config(
             text=f"{orig.event.label} · {self._pv_i + 1}/{len(self._pv_frames)} · {orig.event.where}")
         self._tb_refresh(orig)
+        bg_transition = eng.background_transition(frame, prev) if animate and prev is not None else None
+        if bg_transition is not None and bg_transition.approx:
+            note = bg_transition.note or "no puedo reproducirla exactamente fuera de Ren'Py"
+            self._pv_status.config(
+                text=f"{orig.event.label} · {self._pv_i + 1}/{len(self._pv_frames)} · "
+                     f"{orig.event.where} · transición «{bg_transition.name}» no reproducida: {note}")
+            bg_transition = None
         dur = eng.duration(frame, prev) if (animate and prev is not None) else 0.0
+        if bg_transition is not None:
+            dur = max(dur, bg_transition.duration)
         if dur > 0:
+            old_img = eng.render(prev).convert("RGBA") if bg_transition is not None else None
             self._pv_t0 = time.monotonic()
-            self._pv_tick(frame, prev, dur)
+            self._pv_tick(frame, prev, dur, bg_transition, old_img)
         else:
             self._pv_draw(eng.render(frame))
 
-    def _pv_tick(self, frame, prev, dur: float) -> None:
+    def _pv_tick(self, frame, prev, dur: float, bg_transition=None, old_img=None) -> None:
         t = time.monotonic() - self._pv_t0
         if t >= dur:
             self._pv_job = None
             self._pv_draw(self._pv.render(frame))
             return
-        self._pv_draw(self._pv.render(frame, prev, t, quick=True), quick=True)
-        self._pv_job = self.after(15, lambda: self._pv_tick(frame, prev, dur))
+        img = self._pv.render(frame, prev, t, quick=True)
+        if bg_transition is not None and old_img is not None:
+            img = transitions.render(bg_transition, old_img, img.convert("RGBA"), t)
+        self._pv_draw(img, quick=True)
+        self._pv_job = self.after(15, lambda: self._pv_tick(frame, prev, dur, bg_transition, old_img))
 
     def _pv_draw(self, img, quick: bool = False) -> None:
         self._pv_img = img
@@ -511,7 +526,9 @@ class DialogueBrowser(tk.Tk):
 
     def _pv_eff(self, frame):
         lay = self._pv_edits.get(self._ekey(frame))
-        return cells.apply_layout(frame, lay) if lay is not None else frame
+        eng = self._pv_engine()
+        return cells.apply_layout(frame, lay, lambda at: eng.lib.has_event(at, "hide")) \
+            if lay is not None and eng is not None else frame
 
     def _pv_rerender(self, msg: str = "") -> None:
         if self._pv_job is not None:
@@ -735,9 +752,88 @@ class DialogueBrowser(tk.Tk):
                 lambda: self._pv_edit(lambda L: L.swap(k, j))))
         if lay is not None and k in lay.slots:
             m.add_separator()
-            m.add_command(label="Quitar de la escena",
-                          command=lambda: self._pv_menu_action(lambda: self._pv_edit(lambda L: L.remove(k))))
+            m.add_command(label="Quitar…",
+                          command=lambda: self._pv_menu_action(lambda: self._pv_remove(k)))
         m.post(event.x_root, event.y_root)
+
+    def _pv_right_click(self, event):
+        if self._pv_in_textbox(event):
+            return None
+        k = self._pv_cell_at(event)
+        if k is None:
+            return None
+        if self._pv_click_job is not None:
+            self.after_cancel(self._pv_click_job)
+            self._pv_click_job = None
+        self._pv_press_info = self._pv_drag_src = None
+        self._pv_canvas.delete("drag")
+        self._pv_canvas.config(cursor="")
+        self._pv_menu(k, event)
+        return "break"
+
+    def _pv_remove(self, slot: int) -> None:
+        lay = self._pv_layout()
+        if lay is None or slot not in lay.slots:
+            return
+        placement = lay.slots[slot]
+        dialog = tk.Toplevel(self)
+        dialog.title("Quitar personaje")
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.result = None
+        ttk.Label(
+            dialog,
+            text=f"¿Qué quieres quitar de {placement.image}?",
+            padding=(18, 16, 18, 8),
+        ).pack(fill="x")
+        ttk.Label(
+            dialog,
+            text="Puedes eliminar la función y mantener al personaje, o eliminar al personaje de la escena.",
+            padding=(18, 0, 18, 12),
+            wraplength=380,
+            justify="left",
+        ).pack(fill="x")
+        buttons = ttk.Frame(dialog, padding=(12, 0, 12, 12))
+        buttons.pack(fill="x")
+
+        def finish(choice: Optional[str]) -> None:
+            dialog.result = choice
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Eliminar función", command=lambda: finish("effect")).pack(side="left")
+        ttk.Button(buttons, text="Eliminar personaje de escena",
+                   command=lambda: finish("actor")).pack(side="left", padx=8)
+        ttk.Button(buttons, text="Cancelar", command=lambda: finish(None)).pack(side="right")
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(None))
+        dialog.bind("<Escape>", lambda _event: finish(None))
+        dialog.grab_set()
+        self._modal += 1
+        try:
+            self.wait_window(dialog)
+        finally:
+            self._modal -= 1
+
+        if dialog.result == "effect":
+            self._pv_edit(lambda layout: self._pv_clear_effect(layout, slot))
+        elif dialog.result == "actor":
+            self._pv_edit(lambda layout: layout.remove(slot))
+
+    def _pv_clear_effect(self, layout, slot: int) -> str:
+        placement = layout.slots[slot]
+        engine = self._pv_engine()
+        if engine is None:
+            raise ValueError("No se pudo cargar el catálogo de transforms para quitar el efecto.")
+        transforms = cells.split_top(placement.transform)
+        hide_transforms = {
+            transform for transform in transforms
+            if engine.lib.has_event(transform, "hide")
+        }
+        if hide_transforms:
+            transforms = [transform for transform in transforms if transform not in hide_transforms]
+            placement.transform = ", ".join(transforms)
+        else:
+            placement.transform = ""
+        return f"Efecto quitado: {placement.image}"
 
     def _pv_menu_action(self, action) -> None:
         if self._pv_active_menu is not None:
@@ -853,19 +949,19 @@ class DialogueBrowser(tk.Tk):
         frame = self._scene_frame()
         if frame is None:
             raise RuntimeError("No encuentro el diálogo: pulsa «Recargar .rpy».")
-        return scene_ctl.build_context(self.db, frame, self._scene_find_image, include_all)
+        return scene_edit.build_context(self.db, frame, self._scene_find_image, include_all)
 
     def _scene_apply(self, op: str, bg, effect, reshow: bool):
         frame = self._scene_frame()
         if frame is None:
             return False, "No encuentro el diálogo: pulsa «Recargar .rpy»."
-        ok, msg, full = self._scene_ctl.apply(self.db, frame, op, bg, effect, reshow, self._mtimes)
+        ok, msg, full = self._scene_controller.apply(self.db, frame, op, bg, effect, reshow, self._mtimes)
         if ok:
             self._scene_reloaded(full)
         return ok, msg
 
     def _scene_undo(self):
-        ok, msg = self._scene_ctl.undo()
+        ok, msg = self._scene_controller.undo()
         if ok:
             self._scene_reloaded(True)            # puede haberse quitado una definición: se relee todo
         return ok, msg
@@ -885,7 +981,7 @@ class DialogueBrowser(tk.Tk):
             return
         self._scene_key = self._ekey(frame)
         dlg = scene_gui.SceneBrowser(self, self._pv_engine, self._scene_context, self._scene_apply,
-                                     self._scene_undo, self._scene_ctl.can_undo)
+                                     self._scene_undo, self._scene_controller.can_undo)
         self._modal += 1                           # sin auto-guardado mientras la ventana está abierta
         try:
             self.wait_window(dlg)
@@ -1250,10 +1346,10 @@ class DialogueBrowser(tk.Tk):
 
     def _check_say(self, parts):
         """(error, línea) para unas SayParts: primero las reglas del editor, luego las del escritor."""
-        why = say_edit.validate(parts, self.db.characters)
+        why = dialogue.validate(parts, self.db.characters)
         if why:
             return why, ""
-        code = say_edit.build_say(parts)
+        code = dialogue.build_say(parts)
         return (rpy_writer.validate_say(code) or ""), code
 
     def _edit_line(self, dl) -> None:
@@ -1261,15 +1357,15 @@ class DialogueBrowser(tk.Tk):
         old = self._read_code(dl)
         if old is None:
             return
-        parts = say_edit.parse_say(old)
+        parts = dialogue.parse_say(old)
         if parts is None:
             messagebox.showinfo(
                 "Editar línea", "Esta línea no tiene la forma  personaje [pose] \"texto\" ; "
                 "la abro en el editor de texto.", parent=self)
             self._edit_raw([dl], [old])
             return
-        dlg = _SayEditor(self, dl, parts, say_edit.speaker_choices(self.db),
-                         say_edit.temp_names(self.db), self._check_say)
+        dlg = _SayEditor(self, dl, parts, dialogue.speaker_choices(self.db),
+                         dialogue.temp_names(self.db), self._check_say)
         self._modal += 1
         try:
             self.wait_window(dlg)
@@ -1277,8 +1373,8 @@ class DialogueBrowser(tk.Tk):
             self._modal -= 1
         if dlg.result is None:
             return
-        new = say_edit.parse_say(dlg.result)
-        if new is not None and say_edit.same(new, parts):
+        new = dialogue.parse_say(dlg.result)
+        if new is not None and dialogue.same(new, parts):
             self._pv_status.config(text="Diálogo sin cambios.")
             return                                   # no se reescribe una línea que dice lo mismo
         self._apply_dialogue_edits([dl], [old], [dlg.result])
@@ -1349,7 +1445,7 @@ class DialogueBrowser(tk.Tk):
     def _tb_refresh(self, frame=None) -> None:
         """Panel Textbox: resumen de la línea y el hablante actual en el desplegable."""
         frame = frame or self._pv_frame()
-        self._tb_choices = say_edit.quick_choices(self.db)
+        self._tb_choices = dialogue.quick_choices(self.db)
         self._tb_box.config(values=[c.label for c in self._tb_choices])
         if frame is None:
             self._tb_info.config(text="")
@@ -1358,9 +1454,9 @@ class DialogueBrowser(tk.Tk):
         d = frame.event.data
         who = d["who"]
         if not who:
-            cur = say_edit.NARRATOR_LABEL
+            cur = dialogue.NARRATOR_LABEL
         elif who in self.db.characters:
-            cur = say_edit.speaker_label(self.db, who)
+            cur = dialogue.speaker_label(self.db, who)
         elif who == "extend":
             cur = ""
         else:
@@ -1396,7 +1492,7 @@ class DialogueBrowser(tk.Tk):
             if not name:
                 self._tb_refresh()
                 return
-            ch = say_edit.Choice("temp", name, name)
+            ch = dialogue.Choice("temp", name, name)
         self._quick_apply(dl, ch)
         self._tb_refresh()
 
@@ -1404,7 +1500,7 @@ class DialogueBrowser(tk.Tk):
         old = self._read_code(dl)
         if old is None:
             return
-        parts = say_edit.parse_say(old)
+        parts = dialogue.parse_say(old)
         if parts is None:
             messagebox.showinfo("Editar línea", "Esta línea tiene una forma especial: usa «Editar línea».",
                                 parent=self)
@@ -1413,7 +1509,7 @@ class DialogueBrowser(tk.Tk):
                 or (ch.kind == "narr" and not parts.temp and not parts.speaker)
                 or (ch.kind == "temp" and parts.temp and parts.speaker == ch.value)):
             return                                     # ya habla ese: no se toca (ni se pierde su pose)
-        new = say_edit.with_speaker(parts, ch.kind, ch.value)
+        new = dialogue.with_speaker(parts, ch.kind, ch.value)
         why, code = self._check_say(new)
         if why:
             messagebox.showerror("Hablante", why, parent=self)
@@ -1661,7 +1757,7 @@ class _SayEditor(tk.Toplevel):
         self._check = check
         self._by_label = {c.label: c.value for c in choices if c.kind == "var"}
         self._label_of = {c.value: c.label for c in choices if c.kind == "var"}
-        self._narr = say_edit.NARRATOR_LABEL
+        self._narr = dialogue.NARRATOR_LABEL
 
         outer = ttk.Frame(self, padding=10)
         outer.pack(fill="both", expand=True)
@@ -1747,7 +1843,7 @@ class _SayEditor(tk.Toplevel):
         else:
             speaker = self._by_label.get(who, who)
         pose = "" if (temp or not speaker) else self.v_pose.get().strip()
-        return say_edit.SayParts(speaker=speaker, temp=temp, pose=pose, text=self.txt.get("1.0", "end-1c"),
+        return dialogue.SayParts(speaker=speaker, temp=temp, pose=pose, text=self.txt.get("1.0", "end-1c"),
                                  tail=self._p0.tail, raw_text=self._p0.raw_text, orig_text=self._p0.orig_text)
 
     def _on_temp(self) -> None:
@@ -2350,11 +2446,17 @@ class _PosePicker(tk.Toplevel):
     def _at_effect_context(self):
         return self.tag.get(), tuple(self._attrs() or ()), self.expr, self._bg
 
+    def _at_effect_event(self, text: str) -> str:
+        if (self._engine.lib.duration_expr(text, "show") > 0
+                or self._engine.lib.loops_expr(text, "show")):
+            return "show"
+        return "hide" if self._engine.lib.has_event(text, "hide") else "show"
+
     def _at_effect_image(self, effect_name: str, t):
         effect = next(item for item in self._effects if item.name == effect_name)
         text = self._at_effect_text(effect)
         return self._engine.sprite_frame(
-            self.tag.get(), self._attrs() or (), text, "show", t,
+            self.tag.get(), self._attrs() or (), text, self._at_effect_event(text), t,
             f"t{self._count}{self._slot}", self._bg, quick=True,
         )
 
@@ -2362,9 +2464,10 @@ class _PosePicker(tk.Toplevel):
         text = self._at_effect_text(effect)
         cache_key = (*self._at_gallery_context, text, AT_EFFECT_CARD_SIZE)
         if cache_key not in self._at_gallery_photos:
-            duration = self._engine.lib.duration_expr(text, "show")
+            event = self._at_effect_event(text)
+            duration = self._engine.lib.duration_expr(text, event)
             t = (min(duration / 2, 1.0) if duration > 0 else None)
-            if self._engine.lib.loops_expr(text, "show"):
+            if self._engine.lib.loops_expr(text, event):
                 t = 1.0
             image = self._at_effect_image(effect.name, t)
             self._at_gallery_photos[cache_key] = _photo(image, *AT_EFFECT_CARD_SIZE)
@@ -2495,7 +2598,8 @@ class _PosePicker(tk.Toplevel):
             self._stop_at_effect_preview()
             self._at_preview_expr = context
             self._at_preview_started = time.monotonic()
-            self._at_preview_duration = self._engine.lib.duration_expr(expression, "show")
+            event = self._at_effect_event(expression)
+            self._at_preview_duration = self._engine.lib.duration_expr(expression, event)
             self._at_preview_loops = bool(self._at_preview_loop_var.get())
             self._at_preview_finished = False
         if self._at_preview_finished or self._at_preview_job is not None:
@@ -2535,8 +2639,10 @@ class _PosePicker(tk.Toplevel):
         self._at_preview_job = self.after(33, self._tick_at_effect_preview)
 
     def _draw_at_effect_preview(self, elapsed) -> None:
+        expression = self.tf.get().strip()
         image = self._engine.sprite_frame(
-            self.tag.get(), self._attrs() or (), self.tf.get().strip(), "show", elapsed,
+            self.tag.get(), self._attrs() or (), expression,
+            self._at_effect_event(expression), elapsed,
             f"t{self._count}{self._slot}", self._bg, quick=True,
         )
         self._at_preview_source_image = image
@@ -2617,8 +2723,9 @@ class _PosePicker(tk.Toplevel):
         self._stop_at_effect_hover(render_static=True)
         effect = self._at_gallery_cards[effect_name]["effect"]
         text = self._at_effect_text(effect)
-        if (self._engine.lib.duration_expr(text, "show") <= 0
-                and not self._engine.lib.loops_expr(text, "show")):
+        event = self._at_effect_event(text)
+        if (self._engine.lib.duration_expr(text, event) <= 0
+                and not self._engine.lib.loops_expr(text, event)):
             return
         self._at_gallery_hover_key = effect_name
         self._at_gallery_hover_started = time.monotonic()
@@ -2666,8 +2773,9 @@ class _PosePicker(tk.Toplevel):
             return
         card = self._at_gallery_cards[effect_name]
         text = self._at_effect_text(card["effect"])
-        duration = self._engine.lib.duration_expr(text, "show")
-        if duration > 0 and not self._engine.lib.loops_expr(text, "show"):
+        event = self._at_effect_event(text)
+        duration = self._engine.lib.duration_expr(text, event)
+        if duration > 0 and not self._engine.lib.loops_expr(text, event):
             elapsed %= duration
         image = self._at_effect_image(effect_name, elapsed)
         self._at_gallery_hover_photo = _photo(image, *AT_EFFECT_CARD_SIZE)

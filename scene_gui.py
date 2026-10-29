@@ -2,12 +2,12 @@
 scene_gui.py - Ventana «Escenarios»: carrusel de fondos, color sólido, transición con vista previa y los botones
 Reemplazar / Agregar / Eliminar la instrucción `scene` del diálogo elegido.
 
-Toda la lógica está en scenes.py (fondos y carrusel), transitions.py (efectos), scene_edit.py y scene_ctl.py
+Toda la lógica está en scenes.py (fondos y carrusel), transitions.py (efectos) y scene_edit.py
 (escritura en los .rpy); esta ventana solo la dibuja. Se abre desde el botón «🎬 Escenarios…» de PRTT.
 
 La ventana recibe, en vez de datos, funciones del programa principal:
     get_engine()                     -> preview.Preview (dibuja los fondos con tus mismas imágenes) o None
-    get_context(include_all)         -> scene_ctl.Context (qué escena manda ahora, fondos, transiciones)
+    get_context(include_all)         -> scene_edit.Context (qué escena manda ahora, fondos, transiciones)
     do_apply(op, bg, effect, reshow) -> (ok, mensaje)   op = "replace" | "add" | "delete"
     do_undo()                        -> (ok, mensaje)
     can_undo()                       -> bool

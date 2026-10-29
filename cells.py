@@ -27,7 +27,7 @@ import keyword
 import os
 import re
 from dataclasses import dataclass, field, replace
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from rpy_parser import HIDE_TRANSFORMS, POS_RE, parse_position
 from stage import Actor, Frame, Stage
@@ -343,7 +343,7 @@ class CellLayout:
 def _stage_transform(a: Actor, std: str) -> str:
     """Transform libre de un personaje colocado, o "" si es justo el estándar de su celda.
     Conserva lo que el guion dice (hf21, `at t21, hop`...) para no reescribirlo como t21."""
-    first = a.pos_name if (a.pos_name and a.pos_name not in HIDE_TRANSFORMS) else std
+    first = a.pos_name if (a.pos_name and (a.pos_name not in HIDE_TRANSFORMS or a.hiding)) else std
     joined = ", ".join([first] + list(a.extra_transforms))
     return "" if joined == std else joined
 
@@ -384,10 +384,11 @@ def _target(lay: CellLayout, slot: int, p: Placement):
     pos = parse_position(names[0]) if names else None
     if pos is not None and pos.motion != "hide":
         return names[0], tuple(names[1:]), pos.count, pos.slot
-    return names[0], tuple(names), 0, 0                   # nombre propio: no es una celda tXY (como al releerlo)
+    return names[0], tuple(names[1:]), 0, 0               # nombre propio: no es una celda tXY
 
 
-def apply_layout(frame: Frame, lay: CellLayout) -> Frame:
+def apply_layout(frame: Frame, lay: CellLayout,
+                 has_hide_event: Optional[Callable[[str], bool]] = None) -> Frame:
     """Copia del frame con los personajes colocados según `lay` (el original no se toca).
 
     Los personajes que no cambiaron de celda conservan su movimiento/posición del guion
@@ -416,7 +417,9 @@ def apply_layout(frame: Frame, lay: CellLayout) -> Frame:
             actor.pos_name = actor.place_name = name
             actor.extra_transforms = extras
             actor.motion = ""
-            actor.hiding = False
+            actor.hiding = bool(has_hide_event and has_hide_event(lay.at_of(slot)))
+        elif has_hide_event and has_hide_event(lay.at_of(slot)):
+            actor.hiding = True
     return Frame(frame.index, frame.event, stage, frame.actions)
 
 

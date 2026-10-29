@@ -1,5 +1,5 @@
 """
-scene_edit.py - Busca, reemplaza, añade y elimina instrucciones `scene` en los .rpy.
+scene_edit.py - Analiza, modifica y coordina las instrucciones `scene` en los .rpy.
 
     scene bg club_day with dissolve          (la transición puede ir en la misma línea...)
     scene bg club_day                        (...o en un `with dissolve` suelto justo debajo)
@@ -21,7 +21,7 @@ SceneWriter escribe de forma atómica, hace la copia `archivo.rpy.prtt-bak` la p
 UTF-8 con/sin BOM y CRLF/LF, no escribe si el archivo cambió en disco, y recuerda el texto anterior de cada cambio
 para «Deshacer» mientras PRTT está abierto.
 
-No depende de Tkinter.
+Incluye el catálogo y controlador que usa la ventana de escenarios. No depende de Tkinter.
 """
 from __future__ import annotations
 
@@ -29,10 +29,12 @@ import codecs
 import os
 import re
 import shutil
-from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional, Tuple
 
 from rpy_parser import SHOW_STOP, TOKEN_RE, WORD_RE, _scan
+import scenes
+import transitions
 
 BACKUP_SUFFIX = ".prtt-bak"
 KEEP = object()            # «conservar la transición que ya tiene»
@@ -163,11 +165,6 @@ def with_code(phys: str, new_code: str) -> str:
     return _indent_of(phys) + new_code + (("  " + comment) if comment else "") + _eol_of(phys)
 
 
-def _same_start(phys: str, raw: str) -> bool:
-    p, r = _norm(phys), _norm(raw)
-    return bool(r) and p.startswith(r[:min(len(r), 12)])
-
-
 def parse_scene_line(code: str):
     """(nombre, cláusulas, resto_with) o None si no se puede reescribir con seguridad (ATL con ':', expression...)."""
     toks = [(m.group(), m.start()) for m in TOKEN_RE.finditer(code)]
@@ -220,10 +217,13 @@ def build_scene_code(name: str, clauses, tail: str) -> str:
 # --------------------------------------------------------------------------------------
 def _check_ref(lines: List[str], ref: SceneRef) -> str:
     i = ref.line - 1
-    if not 0 <= i < len(lines) or not _same_start(lines[i], ref.raw):
+    if not 0 <= i < len(lines):
         raise SceneError(f"{ref.file}:{ref.line}: esa línea ya no coincide con lo que PRTT leyó. "
                          "Pulsa «Recargar .rpy» y vuelve a intentarlo.")
     code = single_line(lines[i])
+    if code is None or _norm(code.strip()) != _norm(ref.raw):
+        raise SceneError(f"{ref.file}:{ref.line}: esa línea ya no coincide con lo que PRTT leyó. "
+                         "Pulsa «Recargar .rpy» y vuelve a intentarlo.")
     parsed = parse_scene_line(code.strip()) if code is not None else None
     if parsed is None:
         raise SceneError(f"{ref.file}:{ref.line}: esta instrucción `scene` usa algo que no reescribo con seguridad "
@@ -238,7 +238,11 @@ def _check_next_with(lines: List[str], ref: SceneRef) -> int:
     j = ref.next_with_line - 1
     if 0 <= j < len(lines):
         code = single_line(lines[j])
-        if code is not None and code.strip().startswith("with"):
+        expected = f"with {ref.next_with or ''}".strip()
+        expanded = lines[j].expandtabs(4)
+        indent = len(expanded) - len(expanded.lstrip(" "))
+        if (code is not None and _norm(code.strip()) == _norm(expected)
+                and indent == ref.indent):
             return j
     raise SceneError(f"{ref.file}:{ref.next_with_line}: el `with` de la escena ya no está donde PRTT lo leyó. "
                      "Pulsa «Recargar .rpy».")
@@ -433,3 +437,96 @@ class SceneWriter:
                 continue
             self._undo = [[(r, d, now if r == rel else m) for r, d, m in g] for g in self._undo]
         return True, "Cambio de escenario deshecho."
+
+
+@dataclass
+class Context:
+    where: str
+    current: Optional[SceneRef]
+    previous: Optional[SceneRef]
+    backgrounds: List[scenes.Background]
+    transitions: List[transitions.Spec]
+    notes: List[str] = field(default_factory=list)
+
+    @property
+    def current_bg(self) -> str:
+        return self.current.name if self.current else ""
+
+    @property
+    def previous_bg(self) -> str:
+        return self.previous.name if self.previous else ""
+
+
+def build_context(db, frame, find_image: Optional[Callable[[str], object]] = None,
+                  include_all: bool = False) -> Context:
+    current, previous = find_scenes(db, frame)
+    notes = []
+    if current is None:
+        notes.append("Este diálogo no tiene ninguna instrucción `scene` antes dentro de su label: "
+                     "solo se puede AGREGAR una.")
+    return Context(f"{frame.event.label} · {frame.event.where}", current, previous,
+                   scenes.collect_backgrounds(db, include_all),
+                   transitions.collect_transitions(db, find_image), notes)
+
+
+class SceneController:
+    def __init__(self, game_dir: str) -> None:
+        self.writer = SceneWriter(game_dir)
+
+    def can_undo(self) -> bool:
+        return self.writer.can_undo()
+
+    def undo(self) -> Tuple[bool, str]:
+        return self.writer.undo()
+
+    def apply(self, db, frame, op: str, bg: Optional[scenes.Background], effect=KEEP, reshow: bool = True,
+              mtimes: Optional[Dict[str, int]] = None) -> Tuple[bool, str, bool]:
+        mtimes = dict(mtimes or {})
+        current, previous = find_scenes(db, frame)
+        steps: List[Step] = []
+        touched: set = set()
+
+        def step(rel: str, fn) -> None:
+            steps.append((rel, fn, None if rel in touched else mtimes.get(rel)))
+            touched.add(rel)
+
+        try:
+            if effect is not KEEP and effect is not None and not isinstance(effect, str):
+                raise SceneError("transición no válida")
+            if op in ("replace", "delete") and current is None:
+                raise SceneError("No hay ninguna instrucción `scene` que mande en este diálogo.")
+            if op in ("replace", "add") and bg is None:
+                raise SceneError("Elige un fondo.")
+            if op == "replace":
+                step(current.file, lambda lines, eol: replace_scene(lines, current, bg.name, effect))
+            elif op == "add":
+                transition = (current.transition if current else None) if effect is KEEP else effect
+                where = first_action_line(frame) or frame.event.line
+                lines = reshow_lines(frame) if reshow else []
+                step(frame.event.file, lambda source, eol: add_scene(
+                    source, where, bg.name, transition, lines, eol))
+            elif op == "delete":
+                step(current.file, lambda lines, eol: delete_scene(lines, current))
+            else:
+                raise SceneError(f"operación desconocida: {op}")
+            full = False
+            if op != "delete" and bg.new:
+                site, _line = definition_site(db)
+                if not site:
+                    raise SceneError("No encuentro ningún `image` en tus .rpy donde escribir la definición del color.")
+                text = scenes.definition_line(bg)
+                step(site, lambda lines, eol: add_bg_definition(lines, text, eol))
+                full = True
+        except SceneError as exc:
+            return False, str(exc), False
+        ok, msg = self.writer.apply(steps)
+        if not ok:
+            return False, msg, False
+        if op == "add" and any(e.kind == "scene" and not e.data.get("onlayer") for e in frame.actions):
+            msg += (" Ojo: este diálogo ya tenía un `scene` justo antes; el anterior solo se verá un instante. "
+                    "Si lo que querías es cambiar su fondo, usa «Reemplazar».")
+        if op == "delete":
+            back = f" Vuelve a mandar «{previous.name}» ({previous.file}:{previous.line})." if previous else \
+                " No queda ninguna escena anterior en este label."
+            msg += back
+        return True, msg, full

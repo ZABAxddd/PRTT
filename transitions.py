@@ -130,9 +130,8 @@ def _color(v, default=(0, 0, 0)):
     return default
 
 
-def _multi_steps(lst):
-    """[False, Dissolve(1.0), Solid("#000"), Pause(1.0), Solid("#000"), Dissolve(1.0), True] ->
-    [("old", None), ("dissolve", 1.0), ("solid", (0,0,0)), ("pause", 1.0), ...]. None si no se entiende."""
+def _multi_steps(lst, expr, known, find_image):
+    """Interpreta las pantallas y transiciones que componen un MultipleTransition."""
     out = []
     for i, e in enumerate(lst.elts):
         item = None
@@ -143,12 +142,35 @@ def _multi_steps(lst):
             arg = _lit(e.args[0]) if e.args else None
             if nm == "Solid":
                 item = ("solid", _color(arg))
-            elif nm in ("Dissolve", "Pause") and isinstance(arg, (int, float)):
-                item = ("dissolve" if nm == "Dissolve" else "pause", float(arg))
-        if item is None or (item[0] in ("dissolve", "pause")) != (i % 2 == 1):      # pantallas en pares, efectos en impares
+            elif nm == "Pause" and isinstance(arg, (int, float)):
+                item = ("pause", float(arg))
+            else:
+                child_expr = ast.get_source_segment(expr, e)
+                child = parse_constructor(nm, child_expr, known, find_image) if child_expr else None
+                if child is not None and not child.approx:
+                    item = ("transition", child)
+        elif isinstance(e, (ast.Name, ast.Attribute)):
+            child_expr = ast.get_source_segment(expr, e)
+            nm = _name_of(e).split(".")[-1]
+            child = parse_constructor(nm, child_expr, known, find_image) if child_expr else None
+            if child is not None and not child.approx:
+                item = ("transition", child)
+        if item is None or (item[0] in ("transition", "pause")) != (i % 2 == 1):
             return None
         out.append(item)
     return out if len(out) >= 3 and len(out) % 2 == 1 else None
+
+
+def _has_unsupported_time_warp(node) -> bool:
+    for kw in node.keywords:
+        if kw.arg != "time_warp":
+            continue
+        if isinstance(kw.value, ast.Constant) and kw.value.value is None:
+            continue
+        if _name_of(kw.value) == "_warper.linear":
+            continue
+        return True
+    return False
 
 
 def parse_constructor(name: str, expr: str, known: Dict[str, Spec],
@@ -174,7 +196,10 @@ def parse_constructor(name: str, expr: str, known: Dict[str, Spec],
     num = lambda v, d: float(v) if isinstance(v, (int, float)) else d
 
     if ctor == "Dissolve":
-        return Spec(name, "dissolve", num(a[0] if a else kw.get("time"), 0.5), source="mod")
+        unsupported_warp = _has_unsupported_time_warp(node)
+        return Spec(name, "dissolve", num(a[0] if a else kw.get("time"), 0.5), source="mod",
+                    approx=unsupported_warp,
+                    note="time_warp personalizado no reproducido" if unsupported_warp else "")
     if ctor == "Fade":
         out_, hold, inn = (num(a[i] if len(a) > i else kw.get(("out_time", "hold_time", "in_time")[i]), d)
                            for i, d in enumerate((0.5, 0.0, 0.5)))
@@ -191,7 +216,10 @@ def parse_constructor(name: str, expr: str, known: Dict[str, Spec],
         if mask is None:
             return Spec(name, "dissolve", dur, source="mod", approx=True,
                         note=f"no encuentro la imagen de máscara {path!r}")
-        return Spec(name, "mask", dur, dict(mask=mask, ramp=max(ramp, 1), reverse=bool(kw.get("reverse"))), "mod")
+        unsupported_warp = _has_unsupported_time_warp(node)
+        return Spec(name, "mask", dur, dict(mask=mask, ramp=max(ramp, 1), reverse=bool(kw.get("reverse"))), "mod",
+                    approx=unsupported_warp,
+                    note="time_warp personalizado no reproducido" if unsupported_warp else "")
     if ctor == "CropMove":
         dur = num(a[0] if a else kw.get("time"), 1.0)
         mode = a[1] if len(a) > 1 else kw.get("mode")
@@ -202,9 +230,10 @@ def parse_constructor(name: str, expr: str, known: Dict[str, Spec],
             return Spec(name, "iris", dur, dict(mode=mode[4:]), "mod")
         return Spec(name, "dissolve", dur, source="mod", approx=True, note=f"CropMove modo {mode!r}")
     if ctor == "MultipleTransition" and node.args and isinstance(node.args[0], (ast.List, ast.Tuple)):
-        steps = _multi_steps(node.args[0])
+        steps = _multi_steps(node.args[0], expr, known, find_image)
         if steps is not None:
-            total = sum(d for k, d in steps[1::2])
+            total = sum(value.duration if kind == "transition" else value
+                        for kind, value in steps[1::2])
             return Spec(name, "multi", total, dict(steps=steps), "mod")
     dur = num(a[0] if a else kw.get("delay", kw.get("time")), 0.5)
     return Spec(name, "dissolve", dur, source="mod", approx=True, note=f"{ctor}: dibujada como disolución")
@@ -300,11 +329,13 @@ def render(spec: Spec, old, new, t: float):
 
         t0 = 0.0
         for i in range(1, len(steps), 2):
-            kind, d = steps[i]
+            kind, value = steps[i]
+            d = value.duration if kind == "transition" else value
             if t < t0 + d or i == len(steps) - 2:
-                q = min(1.0, (t - t0) / d) if (kind == "dissolve" and d > 0) else (1.0 if t >= t0 + d else 0.0)
                 a_img, b_img = screen(steps[i - 1]), screen(steps[i + 1])
-                return Image.blend(a_img, b_img, q) if kind == "dissolve" else (b_img if q >= 1.0 else a_img)
+                if kind == "transition":
+                    return render(value, a_img, b_img, t - t0)
+                return b_img if t >= t0 + d else a_img
             t0 += d
         return screen(steps[-1]).copy()
     out = old.copy()
@@ -383,11 +414,13 @@ def render(spec: Spec, old, new, t: float):
         cache = P.setdefault("_cache", {})
         mask = cache.get((w, h))
         if mask is None:
-            mask = P["mask"].convert("L").resize((w, h))
+            mask = P["mask"].convert("RGB").getchannel("R").resize((w, h))
             if P["reverse"]:
                 mask = mask.point(lambda v: 255 - v)
             cache[(w, h)] = mask
         ramp = P["ramp"]
-        lut = [max(0, min(255, int(255 * (p * (255 + ramp) - v) / ramp))) for v in range(256)]
+        offset = -1.0 + (1.0 + ramp / 256.0) * p
+        lut = [max(0, min(255, int(255 * (v / 255.0 + offset) * 256.0 / ramp)))
+               for v in range(256)]
         return Image.composite(new, old, mask.point(lut))
     return new.copy()

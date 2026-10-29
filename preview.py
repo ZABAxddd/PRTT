@@ -30,6 +30,7 @@ from guiconf import GuiConf, load_gui, parse_color
 from rpy_parser import HIDE_TRANSFORMS, parse_position
 from sprites import SpriteBook, SpriteError
 from stage import Actor, Overlay
+import transitions
 
 W, H = SCREEN_W, SCREEN_H
 IMG_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
@@ -95,6 +96,8 @@ class Preview:
         self._font_warn: Dict[Tuple[str, int], str] = {}
         self._disp: Dict[str, tuple] = {}
         self._ph: Dict[str, object] = {}
+        self._transition_specs = None
+        self._transition_masks: Dict[str, object] = {}
 
     # ------------------------------------------------------------------ avisos y archivos
     def _warn(self, msg: str) -> None:
@@ -321,22 +324,43 @@ class Preview:
             return self.lib.sample(name, "replace", self.rest_state(prev_actor), t)
         return self.rest_state(actor)
 
-    def _ghosts(self, frame, prev) -> List[Tuple[Actor, str]]:
+    @staticmethod
+    def _actor_transform(actor: Actor) -> str:
+        names = ([actor.pos_name] if actor.pos_name else []) + list(actor.extra_transforms)
+        return ", ".join(dict.fromkeys(name for name in names if name))
+
+    def _ghosts(self, frame, prev) -> List[Tuple[str, Actor, str]]:
         """Personajes que desaparecen entre `prev` y `frame` con thide/lhide/rhide (y su transform)."""
         if prev is None or any(e.kind == "scene" for e in frame.actions):
             return []
         out = []
         for key, pa in prev.stage.actors.items():
-            if key in frame.stage.actors:
-                continue
-            tf = None
-            for ev in frame.actions:
-                if ev.kind == "show" and (ev.data["as"] or ev.data["tag"]) == key:
-                    for n in ev.data["at"]:
-                        if n in HIDE_TRANSFORMS and self.lib.has(n):
-                            tf = n
+            current = frame.stage.actors.get(key)
+            tf = self._actor_transform(current) if current is not None and current.hiding else ""
+            if tf and not self.lib.has_event(tf, "hide"):
+                tf = ""
+            if current is None:
+                for ev in frame.actions:
+                    if ev.kind == "show" and (ev.data["as"] or ev.data["tag"]) == key:
+                        candidate = ", ".join(ev.data["at"])
+                        if self.lib.has_event(candidate, "hide"):
+                            tf = candidate
+                            break
+                if not tf and any(e.kind == "hide" and e.data["tag"] == key for e in frame.actions):
+                    candidate = self._actor_transform(pa)
+                    if self.lib.has_event(candidate, "hide"):
+                        tf = candidate
+            elif not tf:
+                candidate = self._actor_transform(current)
+                if self.lib.has_event(candidate, "hide") and candidate != self._actor_transform(pa):
+                    tf = candidate
             if tf:
-                out.append((pa, tf))
+                out.append((key, pa, tf))
+        for key, actor in frame.stage.actors.items():
+            if key not in prev.stage.actors and actor.hiding:
+                tf = self._actor_transform(actor)
+                if self.lib.has_event(tf, "hide"):
+                    out.append((key, actor, tf))
         return out
 
     def duration(self, frame, prev) -> float:
@@ -352,9 +376,54 @@ class Preview:
                 dur = max(dur, self.lib.duration(a.pos_name, "show"))
             elif a.motion:
                 dur = max(dur, self.lib.duration(a.pos_name, "replace"))
-        for _pa, tf in self._ghosts(frame, prev):
+        for _key, _pa, tf in self._ghosts(frame, prev):
             dur = max(dur, self.lib.duration(tf, "hide"))
         return dur
+
+    def background_transition(self, frame, prev):
+        """Transición declarada para el cambio de fondo entre dos diálogos, si existe."""
+        if prev is None or prev.stage.bg == frame.stage.bg:
+            return None
+
+        events = frame.actions + [frame.event]
+        scene_index = next((i for i in range(len(events) - 1, -1, -1)
+                            if events[i].kind == "scene" and not events[i].data.get("onlayer")), None)
+        if scene_index is None:
+            return None
+
+        expression = None
+        for event in events[scene_index:]:
+            if event.kind == "with":
+                expression = event.data.get("expr", "")
+            elif event.kind in ("scene", "show", "hide", "say"):
+                attached = event.data.get("with")
+                if attached is not None:
+                    expression = attached
+
+        expression = (expression or "").strip()
+        if not expression or expression == "None":
+            return None
+
+        if self._transition_specs is None:
+            self._transition_specs = transitions.collect_transitions(self.db, self._transition_mask)
+        spec = transitions.find_spec(self._transition_specs, expression)
+        if spec is not None:
+            return spec
+        return transitions.parse_constructor(
+            expression, expression, transitions.STANDARD, self._transition_mask)
+
+    def _transition_mask(self, path: str):
+        if path not in self._transition_masks:
+            real = self.book.resolve_file(path) if path else None
+            mask = None
+            if real:
+                try:
+                    with Image.open(real) as image:
+                        mask = image.convert("RGB").getchannel("R")
+                except (OSError, ValueError):
+                    mask = None
+            self._transition_masks[path] = mask
+        return self._transition_masks[path]
 
     def _draw_actor(self, canvas, actor: Actor, st: Dict[str, float], quick: bool) -> None:
         img = self.actor_image(actor)
@@ -514,17 +583,21 @@ class Preview:
             self._draw_full(canvas, st.bg, "fondo")
 
         animate = prev is not None and t is not None
+        ghosts = self._ghosts(frame, prev) if animate else []
+        ghost_keys = {key for key, _actor, _tf in ghosts}
         items = []                                            # (zorder, seq, tipo, objeto, estado)
         for layer in st.layers():
             if isinstance(layer, Overlay):
                 items.append((layer.zorder, layer.seq, "ov", layer, None))
             else:
                 key = next(k for k, v in st.actors.items() if v is layer)
+                if key in ghost_keys or (layer.hiding and not animate):
+                    continue
                 pa = prev.stage.actors.get(key) if prev is not None else None
                 items.append((layer.zorder, layer.seq, "actor", layer,
                               self.actor_state(layer, pa, t if animate else None)))
         if animate:
-            for pa, tf in self._ghosts(frame, prev):
+            for _key, pa, tf in ghosts:
                 items.append((pa.zorder, pa.seq, "actor", pa, self.lib.sample(tf, "hide", self.rest_state(pa), t)))
         for _z, _s, kind, obj, state in sorted(items, key=lambda i: (i[0], i[1])):
             if kind == "ov":

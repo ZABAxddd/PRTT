@@ -32,9 +32,9 @@ _KNOWN = (
     ("panic", "panic", "", "bucle", "Se balancea sin parar (nerviosa)."),
     ("leftin", "left in", "l", "entrada", "Entra volando desde la izquierda."),
     ("rightin", "right in", "r", "entrada", "Entra volando desde la derecha."),
-    ("thide", "thide", "", "salida", "Se desvanece al salir (úsalo y luego `hide`)."),
-    ("lhide", "left hide", "", "salida", "Sale hacia la izquierda."),
-    ("rhide", "right hide", "", "salida", "Sale hacia la derecha."),
+    ("thide", "thide", "", "salida", "Se desvanece al salir; PRTT agrega `hide` al guardar."),
+    ("lhide", "left hide", "", "salida", "Sale hacia la izquierda; PRTT agrega `hide` al guardar."),
+    ("rhide", "right hide", "", "salida", "Sale hacia la derecha; PRTT agrega `hide` al guardar."),
 )
 PREFIX_TO_EFFECT = {p: n for n, _l, p, _k, _h in _KNOWN if p}
 

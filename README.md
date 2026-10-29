@@ -11,6 +11,7 @@ Selecciona un diálogo, abre la vista previa y trabaja directamente con las celd
 - [Qué puedes hacer](#qué-puedes-hacer)
 - [Requisitos](#requisitos)
 - [Instalar PRTT en tu mod](#instalar-prtt-en-tu-mod)
+- [Organización del código](#organización-del-código)
 - [Iniciar la herramienta](#iniciar-la-herramienta)
 - [Colocar personajes](#colocar-personajes)
 - [Guardar los cambios](#guardar-los-cambios)
@@ -26,9 +27,13 @@ Selecciona un diálogo, abre la vista previa y trabaja directamente con las celd
 - Elige cuántos personajes mostrar y en qué celda colocarlos.
 - Selecciona personajes, poses y expresiones desde galerías visuales.
 - Arrastra personajes entre celdas, intercámbialos, quítalos o cambia su posición.
+- Haz clic derecho en una celda para abrir inmediatamente sus opciones. Al quitar un personaje, puedes quitar solo su efecto y mantenerlo en escena, o quitarlo de la escena para que PRTT escriba `hide [personaje]`.
 - Ajusta el orden de capa (`zorder`) para decidir qué personaje queda delante.
 - Prueba efectos de entrada y transformaciones `at` con previews; activa el bucle cuando quieras revisar una animación.
-- Avanza y retrocede por los diálogos para comprobar la composición en contexto.
+- Las previews de transforms que solo definen `on hide` reproducen su animación de salida en vez de quedarse estáticas.
+- Al elegir un transform de salida que tenga `on hide` (por ejemplo, `thide`, `lhide` o `rhide`), PRTT muestra la animación y escribe el `hide [personaje]` después de su `show`.
+- Si quitas solo el efecto, PRTT conserva la posición del personaje y elimina el `hide` asociado. Si quitas de escena un personaje que ya estaba presente, conserva su salida `show ... at [transform on hide]` + `hide`; si era una adición nueva, elimina el par que ya no se necesita.
+- Avanza y retrocede por los diálogos para comprobar la composición en contexto; al avanzar, el preview reproduce transiciones reconocidas, incluidas las `MultipleTransition` con `Dissolve`, `ImageDissolve`, `Pause` y `Solid`. `ImageDissolve` necesita que su máscara esté disponible como archivo dentro de `game`. Si una transición depende de código de Ren'Py o del mod que PRTT no puede interpretar, no inventa un efecto equivalente y avisa en pantalla.
 
 Los cambios de colocación se reflejan en la vista previa al instante. PRTT usa las definiciones y transforms que encuentra en los `.rpy` del mod para interpretar poses y posiciones.
 
@@ -84,6 +89,18 @@ py -3 -m pip install pillow
 4. Si el comprobador informa que Pillow no está instalado, ejecuta el comando indicado en [Requisitos](#requisitos).
 
 Por defecto, PRTT lee los scripts `.rpy` de la carpeta `game` que contiene a `PRTT` y excluye sus propios archivos. Por eso, **no coloques `PRTT` en la carpeta raíz del juego ni dentro de otra carpeta distinta de `game`**.
+
+## Organización del código
+
+Los módulos se agrupan por responsabilidad para que cada área del proyecto tenga un lugar claro:
+
+- `rpy_parser.py` lee los scripts Ren'Py; `rpy_writer.py` guarda cambios en ellos.
+- `dialogue.py` indexa, busca y prepara la edición de diálogos.
+- `prtt_gui.py` contiene la ventana principal; `scene_gui.py`, la ventana de escenarios.
+- `scene_edit.py` analiza y modifica escenarios, y coordina sus operaciones; `scenes.py` recopila fondos y `transitions.py` describe transiciones.
+- `preview.py`, `stage.py`, `sprites.py` y `cells.py` cubren la vista previa y la composición de personajes.
+
+Mantén estos módulos junto a `PRTT.bat`; la herramienta los importa al iniciarse.
 
 ## Iniciar la herramienta
 
