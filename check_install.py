@@ -11,7 +11,9 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 START = ("prtt.py", "prtt_gui.py")
-OPTIONAL = {"PIL": "Pillow (py -3 -m pip install pillow): sin él no hay sprites ni previews"}
+OPTIONAL = {"PIL": "Pillow (py -3 -m pip install pillow): sin él no hay sprites ni previews",
+            "pygame": "pygame-ce (python -m pip install -r requirements-audio.txt): sin él no se puede escuchar la música en la ventana «Música»"}
+IGNORED = {"numpy", "soundfile", "mutagen"}      # opcionales de audio.py (forma de onda / duración exacta): sin aviso
 
 
 def imports_of(path):
@@ -39,6 +41,8 @@ def main() -> int:
             local = os.path.join(HERE, name + ".py")
             if os.path.isfile(local):
                 todo.append(name + ".py")
+            elif name in IGNORED:
+                continue
             elif name in OPTIONAL and importlib.util.find_spec(name) is None:
                 optional.add(name)
             elif name != "tkinter" and importlib.util.find_spec(name) is None:      # Tkinter se avisa aparte

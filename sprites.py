@@ -14,7 +14,10 @@ from __future__ import annotations
 import ast
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PIL import Image as PILImage
 
 try:  # Pillow es opcional
     from PIL import Image
@@ -127,7 +130,7 @@ class SpriteBook:
         self._cache: Dict[str, Tuple[object, List[str]]] = {}
 
     # -------------------------------------------------------------- definiciones
-    def find_name(self, tag: str, attrs) -> Optional[str]:
+    def find_name(self, tag: str, attrs: Sequence[str]) -> Optional[str]:
         """Nombre de imagen definida para `tag attrs` (acepta atributos en otro orden)."""
         tokens = [tag] + list(attrs)
         name = " ".join(tokens)
@@ -155,7 +158,7 @@ class SpriteBook:
         return None
 
     # -------------------------------------------------------------- composición
-    def compose(self, name: str):
+    def compose(self, name: str) -> Tuple["PILImage.Image", List[str]]:
         """Devuelve (imagen_PIL_RGBA, [capas_que_faltan]). Lanza SpriteError si no se puede."""
         if not HAVE_PIL:
             raise SpriteError("Falta Pillow: instala con  pip install pillow")
@@ -212,7 +215,7 @@ def build_cell_views(frame, db, book: SpriteBook) -> List[CellView]:
             v.info = f"Sin definición 'image {actor.image}'"
             return v
         d = book.get_def(name)
-        v.info = _describe(d)
+        v.info = describe(d)
         try:
             v.image, _missing = book.compose(name)
         except SpriteError as exc:
@@ -230,7 +233,7 @@ def build_cell_views(frame, db, book: SpriteBook) -> List[CellView]:
     return views
 
 
-def _describe(d: Optional[SpriteDef]) -> str:
+def describe(d: Optional[SpriteDef]) -> str:
     if d is None:
         return ""
     if d.kind == "unsupported":

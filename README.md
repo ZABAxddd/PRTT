@@ -15,6 +15,7 @@ Selecciona un diálogo, abre la vista previa y trabaja directamente con las celd
 - [Iniciar la herramienta](#iniciar-la-herramienta)
 - [Colocar personajes](#colocar-personajes)
 - [Guardar los cambios](#guardar-los-cambios)
+- [Música](#música)
 - [Herramientas adicionales](#herramientas-adicionales)
 - [Solución de problemas](#solución-de-problemas)
 - [Uso desde la consola](#uso-desde-la-consola)
@@ -42,6 +43,10 @@ Los cambios de colocación se reflejan en la vista previa al instante. PRTT usa 
 - Navega por archivos, `label` y líneas de diálogo; también puedes buscar texto y editar diálogos.
 - Consulta el fondo y la transición que acompañan al diálogo. El selector de escenarios ofrece galerías y previsualizaciones para trabajar con fondos y transiciones disponibles en los scripts.
 - En las previews de transición, al mantener seleccionado el fondo actual se muestra el fondo anterior hacia el actual; si no hay fondo anterior, se usa gris. Al seleccionar otro fondo, se previsualiza la transición desde el fondo actual hacia el nuevo.
+- Elige la música de cada diálogo: gráfica de la pista con fade-in, fade-out y bucle, vista previa de audio y escritura de `play music` / `stop music` en el `.rpy`.
+- En la pestaña **Preview**, activa **♫ Reproducir música del guion** para escuchar la instrucción `play music` o `stop music` vigente al diálogo seleccionado, incluidos los puntos de bucle y fades del script.
+
+Esta escucha sigue las instrucciones en el orden textual de los `.rpy`; no ejecuta el intérprete de Ren'Py ni resuelve ramas (`if`, `jump`, `call`) o `queue music`.
 - Guarda una captura de la vista previa como PNG.
 - Usa deshacer y rehacer, y activa el auto-guardado para las ediciones compatibles.
 
@@ -53,6 +58,7 @@ La colocación gráfica de personajes es el propósito central de PRTT; las herr
 - Python **3.8 o posterior**.
 - Tkinter, incluido en el instalador oficial de Python para Windows. Si instalas Python manualmente, selecciona **tcl/tk and IDLE**.
 - **Pillow**, necesario para componer sprites y mostrar previews gráficas.
+- **pygame-ce**, necesario para escuchar la música en la ventana «Música» (`python -m pip install -r requirements-audio.txt`).
 - Los scripts `.rpy` del mod y los recursos de imagen de los personajes que quieras previsualizar.
 
 Instala Pillow desde PowerShell o Símbolo del sistema:
@@ -60,6 +66,8 @@ Instala Pillow desde PowerShell o Símbolo del sistema:
 ```powershell
 py -3 -m pip install pillow
 ```
+
+Si ejecutas PRTT con un entorno virtual, actívalo antes de instalar pygame-ce para que el lanzador use ese mismo entorno.
 
 ## Instalar PRTT en tu mod
 
@@ -97,9 +105,11 @@ Los módulos se agrupan por responsabilidad para que cada área del proyecto ten
 
 - `rpy_parser.py` lee los scripts Ren'Py; `rpy_writer.py` guarda cambios en ellos.
 - `dialogue.py` indexa, busca y prepara la edición de diálogos.
-- `prtt_gui.py` contiene la ventana principal; `scene_gui.py`, la ventana de escenarios.
+- `prtt_gui.py` contiene la ventana principal y su historial de deshacer/rehacer; `scene_gui.py`, la ventana de escenarios.
 - `scene_edit.py` analiza y modifica escenarios, y coordina sus operaciones; `scenes.py` recopila fondos y `transitions.py` describe transiciones.
 - `preview.py`, `stage.py`, `sprites.py` y `cells.py` cubren la vista previa y la composición de personajes.
+- `audio.py` detecta pistas, duración y onda y contiene el reproductor; `audio_edit.py` lee y escribe `play music` / `stop music`; `audio_gui.py` es la ventana «Música».
+- `guiconf.py` lee la configuración visual de Ren'Py y contiene el ajuste del tamaño y la posición de las ventanas.
 
 Mantén estos módulos junto a `PRTT.bat`; la herramienta los importa al iniciarse.
 
@@ -141,11 +151,32 @@ Puedes guardar con **Guardar en .rpy** o `Ctrl+S`. El botón **Deshacer** y `Ctr
 
 Después de guardar, ejecuta o recarga el proyecto en Ren'Py para comprobar el resultado dentro del juego. PRTT es una herramienta de edición y previsualización externa; no modifica el juego mientras está ejecutándose.
 
+## Música
+
+El botón **🎵 Música…** (pestañas Diálogos y Preview) abre una ventana para elegir la pista que suena en el diálogo seleccionado y escribir su `play music` o `stop music` en el `.rpy`.
+
+**De dónde salen las pistas.** PRTT lee `definitions.rpy` y todos los scripts: cada `define audio.t1 = "bgm/1.ogg"` es una pista. Como nombre se usa el comentario de esa definición (`define audio.t1 = "bgm/1.ogg"  # Doki Doki Literature Club!` o una línea `# Título` justo encima); si no hay comentario, se usa el nombre de la variable (`t1`). También aparecen las rutas sueltas que tus scripts reproducen (`play music "bgm/x.ogg"`) y las pistas que usan pero nadie define, marcadas como «sin definir».
+
+**Gráfica interactiva.** Muestra la línea de tiempo de la canción con su onda (si PRTT puede leerla), el bucle (`<loop N>` de la definición) y la curva del fade. Arrastra el círculo naranja para ajustar el fade; un clic en la gráfica fija desde dónde escuchar. El selector **Vista** acerca el tramo inicial para ajustar con precisión.
+
+**Pestaña Reproducir música**
+- **Fade-in** y **Bucle (loop)**: generan `play music t1 fadein 1.0`. La música de Ren'Py ya se repite sola, así que con «Bucle» marcado no se escribe nada extra y, al desmarcarlo, se escribe `noloop`. Un fade-in de 0 omite la cláusula.
+- **Reemplazar música actual** reescribe el `play music` que manda en ese diálogo (conserva tu comentario y cláusulas como `volume`). **Agregar nueva música** inserta otra línea encima del diálogo sin tocar la anterior; si justo encima ya hay una instrucción de música, PRTT lo avisa porque la nueva la sustituirá al instante.
+
+**Pestaña Detener música**
+- Muestra la misma gráfica con la curva de **Fade-out** y escribe `stop music fadeout 1.0`. La línea roja indica en qué momento de la canción cae el stop (solo afecta a la vista previa).
+- Al agregar o reemplazar un `stop music`, PRTT averigua qué pista está deteniendo (la última `play music` anterior en el label) y la muestra y usa en la gráfica. Si no hay ninguna, o ya la detuvo otro `stop`, lo avisa. La opción *Anotar en el script qué pista detiene* añade `# detiene: Título` a la línea (apagada por defecto).
+
+**Escuchar.** Para oír la vista previa, con fade-in, fade-out y bucle, instala `pygame` (`py -3 -m pip install pygame`). Sin él, la gráfica y la escritura funcionan igual. La duración se lee de los `.ogg`, `.wav` y `.mp3` sin instalar nada, y la forma de onda de los `.wav`; para ver la onda de `.ogg` o `.mp3` hace falta `pygame` o `soundfile` (con `numpy`). Si los audios siguen dentro de un `.rpa`, extráelos primero.
+
+Los cambios usan las mismas protecciones que el resto de PRTT: copia `.prtt-bak`, escritura atómica, aviso si el archivo cambió fuera y **Deshacer último cambio** en la propia ventana.
+
 ## Herramientas adicionales
 
 - **Diálogos:** explorar archivos y `label`, buscar texto y editar líneas.
 - **Preview:** recorrer diálogos y guardar una imagen PNG de referencia.
 - **Escenarios:** consultar y previsualizar fondos y transiciones disponibles en el mod; incluye transiciones estándar de Ren'Py.
+- **Música:** elegir pistas por su título, ajustar fades y bucle sobre una gráfica y escribir `play music` / `stop music`.
 - **Catálogo de personajes:** ver las poses y expresiones que PRTT pudo leer de las definiciones del proyecto.
 
 ## Solución de problemas
@@ -184,6 +215,7 @@ py -3 prtt.py --cli --buscar "texto para buscar"
 py -3 prtt.py --cli --label ch1_main
 py -3 prtt.py --escena ch1_main
 py -3 prtt.py --catalogo sayori
+py -3 prtt.py --musica
 ```
 
 Para consultar todas las opciones:

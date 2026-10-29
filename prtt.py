@@ -13,17 +13,21 @@ Uso:
     python prtt.py --cli --buscar "texto"           buscar en todos los diálogos
     python prtt.py --escena ch1_main     estado de escena (fondo/celdas) por diálogo
     python prtt.py --catalogo [sayori]   poses y expresiones leídas de definitions.rpy
+    python prtt.py --musica              pistas de música (título de comentario o variable) y qué las usa
     python prtt.py --game RUTA           leer otra carpeta en vez del /game padre
 """
 import argparse
 import os
 import sys
+from typing import Dict, List, Optional, Sequence
 
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TOOL_DIR)
 
 import rpy_parser  # noqa: E402
-from dialogue import build_index, count_lines, format_line, search  # noqa: E402
+from dialogue import LabelInfo, build_index, count_lines, format_line, search  # noqa: E402
+
+ScriptIndex = Dict[str, List[LabelInfo]]
 
 
 def default_game_dir() -> str:
@@ -31,11 +35,11 @@ def default_game_dir() -> str:
     return os.path.dirname(TOOL_DIR)
 
 
-def load_db(game_dir: str):
+def load_db(game_dir: str) -> rpy_parser.ScriptDB:
     return rpy_parser.load(game_dir, exclude_dirs=(TOOL_DIR,))
 
 
-def cli_summary(db, index) -> None:
+def cli_summary(db: rpy_parser.ScriptDB, index: ScriptIndex) -> None:
     n_labels = sum(len(v) for v in index.values())
     print(f"Carpeta leída: {len(db.files)} archivos .rpy · {n_labels} labels con diálogo · "
           f"{count_lines(index)} líneas de diálogo")
@@ -49,8 +53,8 @@ def cli_summary(db, index) -> None:
             print("   ", e)
 
 
-def cli_pose(db, game_dir: str, pose: str, png: str = None) -> int:
-    from sprites import SpriteBook, SpriteError, _describe
+def cli_pose(db: rpy_parser.ScriptDB, game_dir: str, pose: str, png: Optional[str] = None) -> int:
+    from sprites import SpriteBook, SpriteError, describe
     book = SpriteBook(db, game_dir)
     tokens = pose.split()
     name = book.find_name(tokens[0], tokens[1:]) if tokens else None
@@ -61,22 +65,27 @@ def cli_pose(db, game_dir: str, pose: str, png: str = None) -> int:
             print("Poses definidas para ese personaje: " + ", ".join(similar), file=sys.stderr)
         return 1
     d = book.get_def(name)
-    print(_describe(d))
+    if d is None:
+        print(f"No se pudo leer la definición 'image {name}'.", file=sys.stderr)
+        return 1
+    print(describe(d))
     for layer in d.layers:
         print(f"   ({layer.x}, {layer.y})  {layer.path}  ->  {layer.file or 'NO ENCONTRADO'}")
     try:
-        img, _missing = book.compose(name)
+        img, missing = book.compose(name)
     except SpriteError as exc:
         print(f"No se pudo armar la pose: {exc}", file=sys.stderr)
         return 1
     print(f"Pose armada: {img.size[0]}x{img.size[1]}")
+    if missing:
+        print("Capas que faltan: " + ", ".join(missing))
     if png:
         img.save(png)
         print(f"Guardada en {png}")
     return 0
 
 
-def cli_catalog(db, game_dir: str, tag: str = "") -> int:
+def cli_catalog(db: rpy_parser.ScriptDB, game_dir: str, tag: str = "") -> int:
     """Qué poses/expresiones se leyeron de definitions.rpy y qué PNG faltan."""
     from sprites import SpriteBook
     import cells
@@ -100,7 +109,38 @@ def cli_catalog(db, game_dir: str, tag: str = "") -> int:
     return 0
 
 
-def cli_preview(db, game_dir: str, label: str, n: int, png: str = None) -> int:
+def cli_music(db: rpy_parser.ScriptDB, game_dir: str) -> int:
+    """Pistas de música de los .rpy: nombre (comentario o variable), archivo, duración y dónde se usan."""
+    import audio
+    tracks = audio.collect_tracks(db, game_dir)
+    if not tracks:
+        print("No encontré pistas: define algo como  define audio.t1 = \"bgm/1.ogg\"  # Título", file=sys.stderr)
+        return 1
+    used: Dict[str, List[str]] = {}
+    for ev in db.events:
+        if ev.kind == "play" and ev.data.get("channel") == "music":
+            used.setdefault(ev.data["target"].strip("\"'"), []).append(ev.where)
+    book = audio.TrackBook(tracks)
+    uses: Dict[str, List[str]] = {}
+    for key, places in used.items():
+        t = book.find(key)
+        if t is not None:
+            uses.setdefault(t.ref, []).extend(places)
+    print(f"{len(tracks)} pistas")
+    for t in tracks:
+        audio.load_info(t)
+        dur = audio.fmt_time(t.duration) if t.duration else "—"
+        file = os.path.relpath(t.file, game_dir) if t.file else "NO ENCONTRADO"
+        flag = "  (sin definir)" if t.kind == "missing" else ""
+        loop = f"  loop {t.loop}" if t.loop is not None else ""
+        print(f"{t.name:<36} {t.short:<10} {dur:>7}  {file}{loop}{flag}")
+        for w in uses.get(t.ref, [])[:3]:
+            print(f"      usada en {w}")
+    return 0
+
+
+def cli_preview(db: rpy_parser.ScriptDB, game_dir: str, label: str, n: int,
+                png: Optional[str] = None) -> int:
     from stage import build_timeline
     if label not in db.labels:
         print(f"El label '{label}' no existe.", file=sys.stderr)
@@ -125,7 +165,7 @@ def cli_preview(db, game_dir: str, label: str, n: int, png: str = None) -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="PRTT: lector de diálogos y escenas de scripts .rpy")
     ap.add_argument("--game", help="carpeta /game a leer (por defecto, la carpeta que contiene a PRTT)")
     ap.add_argument("--cli", action="store_true", help="modo consola, sin ventana")
@@ -139,6 +179,7 @@ def main(argv=None) -> int:
     ap.add_argument("--n", type=int, default=0, help="(con --preview) nº de diálogo dentro del label, desde 0")
     ap.add_argument("--catalogo", nargs="?", const="", metavar="PERSONAJE",
                     help="poses y expresiones leídas de definitions.rpy (opcional: solo un personaje)")
+    ap.add_argument("--musica", action="store_true", help="listar las pistas de música (comentario # Título o variable)")
     ap.add_argument("--conf", action="store_true", help="mostrar qué ajustes de la caja de texto se leyeron de tus .rpy")
     args = ap.parse_args(argv)
 
@@ -163,6 +204,9 @@ def main(argv=None) -> int:
 
     if args.catalogo is not None:
         return cli_catalog(db, game_dir, args.catalogo)
+
+    if args.musica:
+        return cli_music(db, game_dir)
 
     if args.conf:
         from guiconf import load_gui
@@ -213,6 +257,7 @@ def main(argv=None) -> int:
 
     try:
         import tkinter  # noqa: F401
+        _ = tkinter
     except ImportError:
         print("Tkinter no está disponible en este Python; muestro el resumen en consola.\n"
               "(En Windows, reinstala Python marcando 'tcl/tk and IDLE'.)\n")

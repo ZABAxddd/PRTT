@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from rpy_parser import ScriptDB
+
 Color = Tuple[int, int, int, int]
 Outline = Tuple[int, Color, float, float]
 
@@ -32,6 +34,85 @@ def parse_color(value, default: Color = (255, 255, 255, 255)) -> Color:
     r, g, b = int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
     a = int(s[6:8], 16) if len(s) == 8 else 255
     return (r, g, b, a)
+
+
+def _read_int(widget, method, fallback):
+    try:
+        value = getattr(widget, method)()
+    except (AttributeError, TypeError, ValueError):
+        return fallback
+    return value if isinstance(value, int) else fallback
+
+
+def _outer_position(widget, fallback_x, fallback_y):
+    try:
+        geometry = widget.geometry()
+    except (AttributeError, TypeError):
+        return fallback_x, fallback_y
+    if not isinstance(geometry, str):
+        return fallback_x, fallback_y
+    match = re.search(r"([+-]\d+)([+-]\d+)$", geometry)
+    if match is None:
+        return fallback_x, fallback_y
+    x, y = int(match.group(1)), int(match.group(2))
+    if x < 0 or y < 0:
+        return fallback_x, fallback_y
+    return x, y
+
+
+def fit_window(window, width=None, height=None, *, parent=None, min_size=(1, 1),
+               margin=(12, 36)):
+    """Keep a Tk window visible and center it on its parent when provided."""
+    window.update_idletasks()
+    if parent is not None:
+        parent.update_idletasks()
+
+    screen_width = _read_int(window, "winfo_screenwidth", 1280)
+    screen_height = _read_int(window, "winfo_screenheight", 720)
+    margin_x, margin_y = margin
+    max_width = max(1, screen_width - 2 * margin_x)
+    max_height = max(1, screen_height - 2 * margin_y)
+
+    if parent is not None:
+        parent_width = _read_int(parent, "winfo_width", screen_width)
+        parent_height = _read_int(parent, "winfo_height", screen_height)
+        if parent_width > 1:
+            max_width = min(max_width, max(1, parent_width - 2 * margin_x))
+        if parent_height > 1:
+            max_height = min(max_height, max(1, parent_height - 2 * margin_y))
+
+    requested_width = width if width is not None else _read_int(
+        window, "winfo_reqwidth", min_size[0])
+    requested_height = height if height is not None else _read_int(
+        window, "winfo_reqheight", min_size[1])
+    min_width = min(min_size[0], max_width)
+    min_height = min(min_size[1], max_height)
+    width = max(min_width, min(int(requested_width), max_width))
+    height = max(min_height, min(int(requested_height), max_height))
+
+    if parent is not None:
+        base_x = _read_int(parent, "winfo_rootx", 0)
+        base_y = _read_int(parent, "winfo_rooty", 0)
+        center_width = _read_int(parent, "winfo_width", screen_width)
+        center_height = _read_int(parent, "winfo_height", screen_height)
+        base_x, base_y = _outer_position(parent, base_x, base_y)
+    else:
+        base_x = _read_int(window, "winfo_vrootx", 0)
+        base_y = _read_int(window, "winfo_vrooty", 0)
+        center_width = screen_width
+        center_height = screen_height
+
+    x = base_x + (center_width - width) // 2
+    y = base_y + (center_height - height) // 2
+    virtual_x = _read_int(window, "winfo_vrootx", 0)
+    virtual_y = _read_int(window, "winfo_vrooty", 0)
+    virtual_width = _read_int(window, "winfo_vrootwidth", screen_width)
+    virtual_height = _read_int(window, "winfo_vrootheight", screen_height)
+    x = min(max(x, virtual_x), virtual_x + max(0, virtual_width - width))
+    y = min(max(y, virtual_y), virtual_y + max(0, virtual_height - height))
+
+    window.geometry(f"{width}x{height}+{x}+{y}")
+    return width, height
 
 
 # --------------------------------------------------------------------------------------
@@ -136,7 +217,7 @@ def _outlines(val) -> List[Outline]:
     return out
 
 
-def load_gui(db) -> GuiConf:
+def load_gui(db: ScriptDB) -> GuiConf:
     ev = _Eval(db)
     g = GuiConf()
 

@@ -14,23 +14,25 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Optional
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+import audio
 import cells
 import rpy_parser
 import dialogue
 import tfcatalog
 import scene_edit
 import scene_gui
+import audio_edit
+import audio_gui
 import rpy_writer
 import transitions
-from ui_layout import fit_window
+from guiconf import fit_window
 from dialogue import DialogueLine, build_index, count_lines, search
-from history import EditHistory
 from sprites import HAVE_PIL, SpriteBook, build_cell_views
-from stage import build_timeline
+from stage import Frame, build_timeline
 
 try:
     from PIL import Image, ImageTk
@@ -46,6 +48,63 @@ AT_EFFECT_CARD_SIZE = (144, 81)
 AT_EFFECT_CARD_MIN_WIDTH = 158
 AT_EFFECT_PREVIEW_SIZE = (360, 203)
 SETTINGS_FILE = os.path.join(TOOL_DIR, "prtt_settings.json")   # solo preferencias de PRTT, nunca el estado
+
+
+Edits = Dict[object, object]
+
+
+class EditHistory:
+    def __init__(self, limit: int = 300) -> None:
+        self.limit = limit
+        self._undo: List[Tuple[str, Edits]] = []
+        self._redo: List[Tuple[str, Edits]] = []
+        self.saved: Edits = {}
+
+    @staticmethod
+    def snapshot(edits: Edits) -> Edits:
+        return {key: value.copy() for key, value in edits.items()}
+
+    def record(self, before: Edits, after: Edits, desc: str) -> bool:
+        if before == after:
+            return False
+        self._undo.append((desc, before))
+        if len(self._undo) > self.limit:
+            del self._undo[0]
+        self._redo.clear()
+        return True
+
+    def can_undo(self) -> bool:
+        return bool(self._undo)
+
+    def can_redo(self) -> bool:
+        return bool(self._redo)
+
+    def undo(self, current: Edits) -> Optional[Tuple[str, Edits]]:
+        if not self._undo:
+            return None
+        desc, before = self._undo.pop()
+        self._redo.append((desc, self.snapshot(current)))
+        return desc, before
+
+    def redo(self, current: Edits) -> Optional[Tuple[str, Edits]]:
+        if not self._redo:
+            return None
+        desc, after = self._redo.pop()
+        self._undo.append((desc, self.snapshot(current)))
+        return desc, after
+
+    def dirty(self, edits: Edits) -> bool:
+        return edits != self.saved
+
+    def pending(self, edits: Edits) -> int:
+        return sum(1 for key in set(edits) | set(self.saved)
+                   if edits.get(key) != self.saved.get(key))
+
+    def mark_saved(self, key: object, layout) -> None:
+        if layout is None:
+            self.saved.pop(key, None)
+        else:
+            self.saved[key] = layout.copy()
 
 
 def _load_settings() -> dict:
@@ -122,7 +181,7 @@ class _ScrollableFrame(ttk.Frame):
 
 
 class DialogueBrowser(tk.Tk):
-    def __init__(self, db, game_dir: str):
+    def __init__(self, db: rpy_parser.ScriptDB, game_dir: str):
         super().__init__()
         self.db = db
         self.index = build_index(db)
@@ -137,6 +196,13 @@ class DialogueBrowser(tk.Tk):
         self._pv_photo = None
         self._pv_job = None      # after() de la animación en curso
         self._pv_t0 = 0.0
+        self._pv_audio_player: Optional[audio.Player] = None
+        self._pv_audio_job: Optional[str] = None
+        self._pv_audio_tracks: Optional[audio.TrackBook] = None
+        self._pv_music_commands: Dict[int, Optional[rpy_parser.Event]] = {}
+        self._pv_music_command_key: Optional[Tuple[str, int, str]] = None
+        self._pv_music_track: Optional[str] = None
+        self._index_music_commands()
         self._pv_dirty = False
         self._pv_edits = {}      # (label, nº de diálogo) -> cells.CellLayout editado (clave estable al insertar líneas)
         self._catalog = None     # cells.SpriteCatalog (se crea al abrir el selector)
@@ -155,6 +221,8 @@ class DialogueBrowser(tk.Tk):
         self.hist = EditHistory()                         # deshacer / rehacer / cambios sin guardar
         self._scene_controller = scene_edit.SceneController(game_dir)
         self._scene_key = None                            # (label, nº) del diálogo con el que se abrió el selector
+        self._audio_controller = audio_edit.AudioController(game_dir)
+        self._audio_key = None                            # (label, nº) del diálogo con el que se abrió «Música»
         self._mtimes = {}                  # archivo -> fecha de modificación cuando PRTT lo leyó
         self._autosave_job = None
         self._modal = 0                    # >0 mientras hay un diálogo modal abierto
@@ -207,6 +275,7 @@ class DialogueBrowser(tk.Tk):
         ttk.Button(top, text="✎ Editar diálogo (F2)", command=self._edit_dialogues).pack(side="left", padx=(12, 0))
         ttk.Button(top, text="📍 Ir a línea", command=self._open_selected_dialogue_in_editor).pack(side="left", padx=(6, 0))
         ttk.Button(top, text="🎬 Escenarios…", command=self._open_scenes).pack(side="left", padx=(6, 0))
+        ttk.Button(top, text="🎵 Música…", command=self._open_audio).pack(side="left", padx=(6, 0))
 
         panes = ttk.PanedWindow(page, orient="horizontal")
         panes.pack(fill="both", expand=True, padx=8)
@@ -339,10 +408,17 @@ class DialogueBrowser(tk.Tk):
         ttk.Button(bar, text="📍 Ir a línea", command=self._open_current_dialogue_in_editor).pack(side="left", padx=(8, 0))
         self._pv_anim = tk.BooleanVar(value=True)
         ttk.Checkbutton(bar, text="Animar", variable=self._pv_anim).pack(side="left", padx=8)
+        self._pv_music_enabled = tk.BooleanVar(value=False)
+        self._pv_music_check = ttk.Checkbutton(
+            bar, text="♫ Reproducir música del guion", variable=self._pv_music_enabled,
+            command=self._pv_music_toggle,
+        )
+        self._pv_music_check.pack(side="left", padx=4)
         ttk.Button(bar, text="Guardar PNG", command=self._pv_save).pack(side="left")
         ttk.Button(bar, text="Ajustes leídos", command=self._pv_settings).pack(side="left", padx=4)
         ttk.Button(bar, text="Copiar script", command=self._pv_copy).pack(side="left")
         ttk.Button(bar, text="🎬 Escenarios…", command=self._open_scenes).pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text="🎵 Música…", command=self._open_audio).pack(side="left", padx=(4, 0))
         self._pv_status = ttk.Label(bar, text="Elige un diálogo en la pestaña «Diálogos».")
         self._pv_status.pack(side="right")
         ops = ttk.Frame(page, padding=(8, 0, 8, 4))
@@ -443,10 +519,13 @@ class DialogueBrowser(tk.Tk):
         if self._pv_job is not None:
             self.after_cancel(self._pv_job)
             self._pv_job = None
-        eng = self._pv_engine()
-        if eng is None or not (0 <= self._pv_i < len(self._pv_frames)):
+        if not (0 <= self._pv_i < len(self._pv_frames)):
             return
         orig = self._pv_frames[self._pv_i]
+        eng = self._pv_engine()
+        if eng is None:
+            self._pv_sync_music(orig)
+            return
         frame = self._pv_eff(orig)
         prev = self._pv_eff(self._pv_frames[self._pv_i - 1]) if self._pv_i > 0 else None
         self._pv_sync_count(orig)
@@ -469,6 +548,115 @@ class DialogueBrowser(tk.Tk):
             self._pv_tick(frame, prev, dur, bg_transition, old_img)
         else:
             self._pv_draw(eng.render(frame))
+        self._pv_sync_music(orig)
+
+    def _index_music_commands(self) -> None:
+        latest: Optional[rpy_parser.Event] = None
+        commands: Dict[int, Optional[rpy_parser.Event]] = {}
+        for event in self.db.events:
+            if event.kind in ("play", "stop") and event.data.get("channel") == "music":
+                latest = event
+            elif event.kind == "say":
+                commands[id(event)] = latest
+        self._pv_music_commands = commands
+
+    def _pv_music_toggle(self) -> None:
+        if not self._pv_music_enabled.get():
+            if self._pv_audio_job is not None:
+                self.after_cancel(self._pv_audio_job)
+                self._pv_audio_job = None
+            if self._pv_audio_player is not None:
+                self._pv_audio_player.close()
+                self._pv_audio_player = None
+            self._pv_music_command_key = None
+            self._pv_music_track = None
+            return
+
+        if self._pv_audio_player is not None:
+            self._pv_audio_player.close()
+        self._pv_audio_player = audio.Player()
+        if not self._pv_audio_player.ok:
+            reason = self._pv_audio_player.why
+            self._pv_audio_player.close()
+            self._pv_audio_player = None
+            self._pv_music_enabled.set(False)
+            self._pv_status.config(text=reason)
+            return
+        self._pv_music_command_key = None
+        self._pv_music_track = None
+        frame = self._pv_frame()
+        if frame is None:
+            self._pv_music_enabled.set(False)
+            self._pv_audio_player.close()
+            self._pv_audio_player = None
+            self._pv_status.config(text="Elige un diálogo para escuchar la música del guion.")
+            return
+        self._pv_sync_music(frame, force=True)
+        self._pv_music_tick()
+
+    @staticmethod
+    def _pv_music_arg(args: Sequence[str], name: str, default: float = 0.0) -> float:
+        for index, value in enumerate(args[:-1]):
+            if value == name:
+                try:
+                    return max(0.0, float(args[index + 1]))
+                except ValueError:
+                    return default
+        return default
+
+    def _pv_sync_music(self, frame: Frame, force: bool = False) -> None:
+        if not self._pv_music_enabled.get() or self._pv_audio_player is None:
+            return
+        command = self._pv_music_commands.get(id(frame.event))
+        command_key = (command.file, command.line, command.raw) if command is not None else None
+        if command_key == self._pv_music_command_key and not force:
+            return
+        self._pv_music_command_key = command_key
+        player = self._pv_audio_player
+        if command is None or command.kind == "stop":
+            fadeout = self._pv_music_arg(command.data.get("args", []), "fadeout") if command else 0.0
+            player.fade_out(fadeout)
+            self._pv_music_track = None
+            if command is None:
+                self._pv_status.config(text="No hay una instrucción de música anterior a este diálogo.")
+            return
+
+        if command.data.get("queued"):
+            self._pv_status.config(text="La cola de música de Ren'Py no se reproduce en la vista previa.")
+            return
+        if self._pv_audio_tracks is None:
+            tracks = audio.collect_tracks(self.db, self.game_dir)
+            self._pv_audio_tracks = audio.TrackBook(tracks)
+        target = command.data.get("target", "")
+        track = self._pv_audio_tracks.find(target)
+        if track is None or not track.file:
+            player.stop()
+            self._pv_music_track = None
+            self._pv_status.config(text=f"No se encontró el archivo de la música «{target}».")
+            return
+
+        audio.load_info(track)
+        args = command.data.get("args", [])
+        start = track.start or 0.0
+        loop = "noloop" not in args
+        fadein = self._pv_music_arg(args, "fadein")
+        envelope: Optional[Callable[[float], Optional[float]]] = (
+            lambda elapsed: audio.fade_in_gain(elapsed, fadein)
+        ) if fadein else None
+        error = player.play(track.file, start, loop, track.loop, track.duration, envelope)
+        if error:
+            self._pv_music_track = None
+            self._pv_status.config(text=error)
+            return
+        self._pv_music_track = track.ref
+        self._pv_status.config(text=f"Música del guion: {track.name}")
+
+    def _pv_music_tick(self) -> None:
+        self._pv_audio_job = None
+        if not self._pv_music_enabled.get() or self._pv_audio_player is None:
+            return
+        self._pv_audio_player.tick()
+        self._pv_audio_job = self.after(40, self._pv_music_tick)
 
     def _pv_tick(self, frame, prev, dur: float, bg_transition=None, old_img=None) -> None:
         t = time.monotonic() - self._pv_t0
@@ -506,7 +694,7 @@ class DialogueBrowser(tk.Tk):
             self._pv_draw_cells()
 
     # ------------------------------------------------------------------ celdas de personajes
-    def _pv_frame(self):
+    def _pv_frame(self) -> Optional[Frame]:
         return self._pv_frames[self._pv_i] if 0 <= self._pv_i < len(self._pv_frames) else None
 
     def _pv_layout(self, create: bool = False):
@@ -989,6 +1177,65 @@ class DialogueBrowser(tk.Tk):
             self._modal -= 1
         self._scene_key = None
 
+    # ------------------------------------------------------------------ música (play music / stop music)
+    def _audio_frame(self):
+        """El diálogo con el que se abrió la ventana de música, releído de los scripts actuales."""
+        if self._audio_key is None:
+            return None
+        label, idx = self._audio_key
+        frames = self._timeline(label) if label in self.db.labels else []
+        return frames[idx] if 0 <= idx < len(frames) else None
+
+    def _audio_context(self):
+        frame = self._audio_frame()
+        if frame is None:
+            raise RuntimeError("No encuentro el diálogo: pulsa «Recargar .rpy».")
+        return audio_edit.build_context(self.db, frame, self.game_dir)
+
+    def _audio_apply(self, op: str, track, opts):
+        frame = self._audio_frame()
+        if frame is None:
+            return False, "No encuentro el diálogo: pulsa «Recargar .rpy»."
+        ok, msg = self._audio_controller.apply(self.db, frame, op, track, opts, self._mtimes)
+        if ok:
+            self._audio_reloaded()
+        return ok, msg
+
+    def _audio_undo(self):
+        ok, msg = self._audio_controller.undo()
+        if ok:
+            self._audio_reloaded()
+        return ok, msg
+
+    def _audio_reloaded(self) -> None:
+        """Tras escribir música: releer los .rpy (cambian los nº de línea; tus poses pendientes se conservan)."""
+        self._reload_db(full=False)
+        if self._pv_visible():
+            self._pv_show(animate=False)
+        else:
+            self._pv_dirty = True
+
+    def _open_audio(self) -> None:
+        frame = self._pv_frame()
+        if frame is None:
+            messagebox.showinfo("Música", "Elige primero un diálogo en la pestaña «Diálogos».", parent=self)
+            return
+        self._audio_key = self._ekey(frame)
+        if self._pv_audio_player is not None:
+            self._pv_audio_player.stop()
+            self._pv_music_command_key = None
+        dlg = audio_gui.AudioBrowser(self, self._audio_context, self._audio_apply, self._audio_undo,
+                                     self._audio_controller.can_undo)
+        self._modal += 1                           # sin auto-guardado mientras la ventana está abierta
+        try:
+            self.wait_window(dlg)
+        finally:
+            self._modal -= 1
+        self._audio_key = None
+        frame = self._pv_frame()
+        if self._pv_music_enabled.get() and frame is not None:
+            self._pv_sync_music(frame, force=True)
+
     # ------------------------------------------------------------------ edición, guardado y deshacer
     @staticmethod
     def _ekey(frame):
@@ -1163,6 +1410,8 @@ class DialogueBrowser(tk.Tk):
         had_engine = self._pv is not None
         new_index = build_index(db)
         self.db = db
+        self._index_music_commands()
+        self._pv_audio_tracks = None
         self._timelines.clear()
         self._stat_files()
         if full:
@@ -1178,6 +1427,11 @@ class DialogueBrowser(tk.Tk):
             self._pv_i = min(cur_key[1], len(self._pv_frames) - 1)
         else:
             self._pv_frames, self._pv_i = [], -1
+        frame = self._pv_frame()
+        if frame is not None:
+            self._pv_sync_music(frame, force=full)
+        elif self._pv_audio_player is not None:
+            self._pv_audio_player.stop()
         if full:
             if had_engine:
                 self._pv_engine()
@@ -1246,6 +1500,12 @@ class DialogueBrowser(tk.Tk):
         for job in (self._autosave_job, self._pv_job):
             if job is not None:
                 self.after_cancel(job)
+        if self._pv_audio_job is not None:
+            self.after_cancel(self._pv_audio_job)
+            self._pv_audio_job = None
+        if self._pv_audio_player is not None:
+            self._pv_audio_player.close()
+            self._pv_audio_player = None
         self.destroy()
 
     def _fill_tree(self) -> None:
@@ -3047,5 +3307,5 @@ class _PosePicker(tk.Toplevel):
         self.destroy()
 
 
-def run(db, game_dir: str) -> None:
+def run(db: rpy_parser.ScriptDB, game_dir: str) -> None:
     DialogueBrowser(db, game_dir).mainloop()

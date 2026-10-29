@@ -13,7 +13,7 @@ import json
 import os
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 # --------------------------------------------------------------------------------------
 # Posiciones: txx, hxx, fxx, hfxx, ixx, rxx, lxx, sxx  (+ thide)
@@ -168,7 +168,7 @@ class Event:
     label: str      # label en el que está
     indent: int
     raw: str
-    data: dict = field(default_factory=dict)
+    data: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def where(self) -> str:

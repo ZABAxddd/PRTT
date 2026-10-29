@@ -19,7 +19,7 @@ from tkinter import colorchooser, messagebox, ttk
 import scene_edit
 import scenes
 import transitions as tr
-from ui_layout import fit_window
+from guiconf import fit_window
 
 try:
     from PIL import Image, ImageTk

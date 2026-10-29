@@ -16,7 +16,10 @@ from __future__ import annotations
 import ast
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PIL import Image as PILImage
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -29,7 +32,7 @@ from atl import DEFAULT_STATE, SCREEN_H, SCREEN_W, TransformLib, parse_body
 from guiconf import GuiConf, load_gui, parse_color
 from rpy_parser import HIDE_TRANSFORMS, parse_position
 from sprites import SpriteBook, SpriteError
-from stage import Actor, Overlay
+from stage import Actor, Frame, Overlay
 import transitions
 
 W, H = SCREEN_W, SCREEN_H
@@ -570,7 +573,8 @@ class Preview:
             y += step
 
     # ------------------------------------------------------------------ API
-    def render(self, frame, prev=None, t: Optional[float] = None, quick: bool = False):
+    def render(self, frame: Frame, prev: Optional[Frame] = None, t: Optional[float] = None,
+               quick: bool = False) -> "PILImage.Image":
         """Imagen RGB 1280x720 del diálogo `frame`.
 
         prev, t: si se dan, anima la transición desde el diálogo anterior: `t` = segundos desde
