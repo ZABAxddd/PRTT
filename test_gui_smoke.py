@@ -253,7 +253,22 @@ with tempfile.TemporaryDirectory() as game2:
     b2._pv_press(Mouse(10, 10)); b2._pv_motion(Mouse(300, 10)); b2._pv_release(Mouse(300, 10))
     assert len(b2.hist._undo) == n_hist
     b2._pv_press(Mouse(10, 10)); b2._pv_release(Mouse(10, 10))
+    assert b2._pv_click_job == ("job", b2._pv_double_click_delay())
     assert b2._pv_sel == 1
+    b2._finish_pv_single_click(1, Mouse(10, 10))
+    assert b2._pv_click_job is None
+    b2._pv_in_textbox = lambda _event: False
+    b2._pv_cell_at = lambda _event: 2
+    b2._pv_pick = MagicMock()
+    b2._pv_press(Mouse(20, 20)); b2._pv_release(Mouse(20, 20))
+    pending_menu = b2._pv_click_job
+    b2._pv_press(Mouse(20, 20))
+    assert b2._pv_double(Mouse(20, 20)) == "break"
+    assert b2._pv_pick.call_args.args == (2,)
+    assert pending_menu in b2.cancelled and b2._pv_click_job is None
+    assert b2._pv_press_info is None
+    b2._pv_release(Mouse(20, 20))
+    assert b2._pv_click_job is None
 
     # --- opción de comentarios: apagada por defecto, se guarda como preferencia y solo entonces se escribe "# PRTT"
     assert b2._write_comments.get() is False and b2.writer.comments is False
@@ -391,57 +406,27 @@ with tempfile.TemporaryDirectory() as game3:
     dlg2._ok()
     assert dlg2.transform == "hf21"
 
-    # ---- ventana de animación
-    dlg2.tf.set("hop")
-    win = dlg2._pvw = None
-    dlg2._open_preview()
-    win = dlg2._pvw
-    assert isinstance(win, prtt_gui._TransformPreview)
-    assert win._span == 0.2                                               # hop dura 0.2 s
-    win._draw(0.1)
-    assert win._photo.size == (640, 360)
-    mid_bytes = win._photo.tobytes()
-    win._draw(None)
-    assert win._photo.tobytes() != mid_bytes                              # a mitad del salto no está en reposo
-    # el evento cambia la duración; panic es un bucle infinito (se enseñan 4 s)
-    win.event.set("hide")
-    win.play()
-    assert win._span == 0.0
-    win.event.set("show")
-    dlg2.tf.set("panic")
-    assert win._span == win.LOOP_SECONDS and "Bucle infinito" in win.info.config.call_args.kwargs["text"]
-    # un transform que no está en tu transforms.rpy se avisa; uno imposible no revienta
-    dlg2.tf.set("no_existe")
-    win._draw(0.0)
-    assert "no_existe" in win.info.config.call_args.kwargs["text"]
-    dlg2.tf.set("hop(")
-    win.play()
-    assert "paréntesis" in win.info.config.call_args.kwargs["text"] or "no válido" in win.info.config.call_args.kwargs["text"]
-    # reproducción: el temporizador avanza hasta el final, repite si hay bucle y se puede parar
-    dlg2.tf.set("hf21")
-    win.loop.set(True)
-    win._t0 -= 0.0
-    win._tick()
-    assert win._job is not None
-    win._t0 -= 10
-    win._tick()
-    assert win._job == ("job", 600)                                       # terminó: reinicia (bucle)
-    win.stop()
-    assert win._job is None
-    win.close()
-    assert win.destroyed
-    # arrastrar la barra de tiempo = ir a ese instante
-    dlg2._pvw = None
-    dlg2._open_preview()
-    win = dlg2._pvw
-    win._on_scale("0.05")
-    assert win._job is None and win._photo is not None
-    # el menú «Previsualizar su animación…» abre la ventana con el transform actual del personaje
+    # El menú de la celda abre el selector existente directamente en la pestaña Efectos.
     b3._pv_frames = b3._timeline("ch1_main")
     b3._pv_i = 0
     b3._pv = eng3
-    made = []
-    prtt_gui._TransformPreview = lambda *a, **k: made.append(a)
-    b3._pv_open_tf_preview(1)
-    assert made and made[0][4]() == "t21" and made[0][3]() == ("1a",) and made[0][5] == 2 and made[0][6] == 1
+    class PickerProbe:
+        def __init__(self, *_args, **_kwargs):
+            self.effects_page = "effects"
+            self.tfnb = types.SimpleNamespace(select=MagicMock())
+            self._on_tf_tab_changed = MagicMock()
+            self.result = None
+    original_picker = prtt_gui._PosePicker
+    try:
+        prtt_gui._PosePicker = PickerProbe
+        b3._pv_catalog = lambda: cat3
+        picker_holder = []
+        b3.wait_window = lambda picker: picker_holder.append(picker)
+        b3._pv_pick(1, initial_tab="Efectos")
+        probe = picker_holder[0]
+        assert probe.tfnb.select.call_args.args == ("effects",)
+        assert probe._on_tf_tab_changed.called
+    finally:
+        prtt_gui._PosePicker = original_picker
+    assert not hasattr(prtt_gui, "_TransformPreview")
 print("OK")

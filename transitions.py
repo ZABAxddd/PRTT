@@ -69,14 +69,19 @@ def _standard() -> List[Spec]:
         out.append(_spec("wipe" + d, "wipe", 1.0, dir=d))
         out.append(_spec("slide" + d, "slide", 1.0, dir=d))
         out.append(_spec("slideaway" + d, "slideaway", 1.0, dir=d))
+        out.append(_spec("push" + d, "push", 0.5, dir=d))
         out.append(_spec("movein" + {"left": "left", "right": "right", "up": "top", "down": "bottom"}[d],
                          "slide", 0.5, True, dir={"left": "right", "right": "left", "up": "down", "down": "up"}[d]))
         out.append(_spec("moveout" + {"left": "left", "right": "right", "up": "top", "down": "bottom"}[d],
                          "slideaway", 0.5, True, dir=d))
         out.append(_spec("easein" + {"left": "left", "right": "right", "up": "top", "down": "bottom"}[d],
                          "slide", 0.5, True, dir={"left": "right", "right": "left", "up": "down", "down": "up"}[d]))
+        out.append(_spec("easeout" + {"left": "left", "right": "right", "up": "top", "down": "bottom"}[d],
+                         "slide", 0.5, True, dir={"left": "right", "right": "left", "up": "down", "down": "up"}[d]))
     out.append(_spec("move", "dissolve", 0.5, True))
     out.append(_spec("ease", "dissolve", 0.5, True))
+    out.append(_spec("easein", "dissolve", 0.5, True))
+    out.append(_spec("easeout", "dissolve", 0.5, True))
     return out
 
 
@@ -323,6 +328,18 @@ def render(spec: Spec, old, new, t: float):
         base = new.copy()
         base.paste(old, off)
         return base
+    if k == "push":
+        d = P["dir"]
+        old_off, new_off = {
+            "left": ((-int(w * p), 0), (int(w * (1 - p)), 0)),
+            "right": ((int(w * p), 0), (-int(w * (1 - p)), 0)),
+            "up": ((0, -int(h * p)), (0, int(h * (1 - p)))),
+            "down": ((0, int(h * p)), (0, -int(h * (1 - p)))),
+        }[d]
+        frame = Image.new("RGBA", (w, h))
+        frame.paste(old, old_off)
+        frame.paste(new, new_off)
+        return frame
     if k == "iris":
         pp = p if P["mode"] == "out" else 1 - p
         box = (int(w / 2 * (1 - pp)), int(h / 2 * (1 - pp)), int(w / 2 * (1 + pp)), int(h / 2 * (1 + pp)))
@@ -349,9 +366,12 @@ def render(spec: Spec, old, new, t: float):
         if sz > 0:
             for y0 in range(0, h, cell):
                 for x0 in range(0, w, cell):
-                    cx, cy = x0 + cell // 2, y0 + cell // 2
-                    box = (max(cx - sz // 2, 0), max(cy - sz // 2, 0), min(cx + sz // 2 + 1, w), min(cy + sz // 2 + 1, h))
-                    out.paste(new.crop(box), box[:2])
+                    right, bottom = min(x0 + cell, w), min(y0 + cell, h)
+                    cx, cy = (x0 + right) // 2, (y0 + bottom) // 2
+                    box = (max(cx - sz // 2, x0), max(cy - sz // 2, y0),
+                           min(cx + sz // 2 + 1, right), min(cy + sz // 2 + 1, bottom))
+                    if box[2] > box[0] and box[3] > box[1]:
+                        out.paste(new.crop(box), box[:2])
         return out
     if k == "punch":
         amp = (1 - p) * (w if P["axis"] == "x" else h) * 0.03

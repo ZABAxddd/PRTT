@@ -22,6 +22,7 @@ import tfcatalog
 import scene_ctl
 import scene_gui
 import rpy_writer
+from ui_layout import fit_window
 from dialogue import DialogueLine, build_index, count_lines, search
 from history import EditHistory
 from sprites import HAVE_PIL, SpriteBook, build_cell_views
@@ -36,6 +37,10 @@ except ImportError:
 TOOL_DIR = os.path.dirname(os.path.abspath(__file__))   # PRTT se ignora a sí mismo al releer /game
 AUTOSAVE_DEFAULT = True        # auto-guardado activado al abrir
 AUTOSAVE_DELAY_MS = 4000       # se guarda tras este tiempo SIN nuevos cambios
+POSE_PICKER_MIN_SIZE = (950, 560)
+AT_EFFECT_CARD_SIZE = (144, 81)
+AT_EFFECT_CARD_MIN_WIDTH = 158
+AT_EFFECT_PREVIEW_SIZE = (360, 203)
 SETTINGS_FILE = os.path.join(TOOL_DIR, "prtt_settings.json")   # solo preferencias de PRTT, nunca el estado
 
 
@@ -54,6 +59,62 @@ def _save_settings(data: dict) -> None:
             json.dump(data, f, indent=1)
     except OSError:
         pass                     # carpeta de solo lectura: la opción vale solo para esta sesión
+
+
+class _ScrollableFrame(ttk.Frame):
+    def __init__(self, master, *, fit_width=False, **kwargs):
+        super().__init__(master)
+        self.fit_width = fit_width
+        self.canvas = tk.Canvas(self, highlightthickness=0)
+        self.vscroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.hscroll = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.content = ttk.Frame(self.canvas, **kwargs)
+        self._window = self.canvas.create_window((0, 0), window=self.content, anchor="nw")
+        self.content.bind("<Configure>", self._content_changed)
+        self.canvas.bind("<Configure>", self._resize_content)
+        self.canvas.configure(yscrollcommand=self._set_vertical_scroll,
+                              xscrollcommand=self._set_horizontal_scroll)
+        self.canvas.bind("<Enter>", lambda _e: self.canvas.focus_set())
+        self.canvas.bind("<MouseWheel>", self._wheel)
+        self.canvas.bind("<Shift-MouseWheel>", self._wheel_horizontal)
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+
+    def _content_changed(self, _event=None) -> None:
+        self._resize_content()
+
+    def _resize_content(self, event=None) -> None:
+        width = event.width if event is not None else self.canvas.winfo_width()
+        height = event.height if event is not None else self.canvas.winfo_height()
+        self.canvas.itemconfigure(
+            self._window,
+            width=width if self.fit_width else max(width, self.content.winfo_reqwidth()),
+            height=max(height, self.content.winfo_reqheight()),
+        )
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _set_vertical_scroll(self, first, last) -> None:
+        self.vscroll.set(first, last)
+        if float(first) <= 0 and float(last) >= 1:
+            if self.vscroll.winfo_manager():
+                self.vscroll.grid_remove()
+        elif self.vscroll.winfo_manager() != "grid":
+            self.vscroll.grid(row=0, column=1, sticky="ns")
+
+    def _set_horizontal_scroll(self, first, last) -> None:
+        self.hscroll.set(first, last)
+        if float(first) <= 0 and float(last) >= 1:
+            if self.hscroll.winfo_manager():
+                self.hscroll.grid_remove()
+        elif self.hscroll.winfo_manager() != "grid":
+            self.hscroll.grid(row=1, column=0, sticky="ew")
+
+    def _wheel(self, event) -> None:
+        self.canvas.yview_scroll(-int(event.delta / 120), "units")
+
+    def _wheel_horizontal(self, event) -> None:
+        self.canvas.xview_scroll(-int(event.delta / 120), "units")
 
 
 class DialogueBrowser(tk.Tk):
@@ -80,6 +141,8 @@ class DialogueBrowser(tk.Tk):
         self._pv_rects = []      # celdas dibujadas: (k, nombre, x0, y0, x1, y1) en px de pantalla
         self._pv_press_info = None     # (celda, x, y) donde se pulsó el ratón
         self._pv_drag_src = None       # celda que se está arrastrando
+        self._pv_click_job = None
+        self._pv_active_menu = None
         self._pv_geom = (0, 0, 1.0)   # (x, y, escala) de la imagen dentro del canvas
         self._settings = _load_settings()
         # Comentarios «# PRTT» en las líneas que PRTT escribe: APAGADO salvo que el usuario lo active.
@@ -95,8 +158,13 @@ class DialogueBrowser(tk.Tk):
         self._autosave = tk.BooleanVar(value=AUTOSAVE_DEFAULT)
         self._title_base = f"PRTT - Lector de diálogos  |  {game_dir}"
         self.title(self._title_base)
-        self.geometry("1500x760")
-        self.minsize(900, 520)
+        width, height = 1500, 760
+        self.geometry(f"{width}x{height}")
+        width, height = fit_window(
+            self, width, height, min_size=(min(760, width), min(440, height)),
+            margin=(10, 30),
+        )
+        self.minsize(min(760, width), min(440, height))
         self._rows = {}          # iid de la derecha -> DialogueLine
         self._groups = {}        # iid de la izquierda -> lista de DialogueLine
         self._build_ui()
@@ -239,7 +307,7 @@ class DialogueBrowser(tk.Tk):
         self._pv_canvas.bind("<Button-1>", self._pv_press)
         self._pv_canvas.bind("<B1-Motion>", self._pv_motion)
         self._pv_canvas.bind("<ButtonRelease-1>", self._pv_release)
-        self._pv_canvas.bind("<Double-Button-1>", self._pv_double)    # doble clic en el textbox: editar la línea
+        self._pv_canvas.bind("<Double-Button-1>", self._pv_double)
         self._pv_canvas.bind("<Motion>", self._pv_hover)
         self.bind("<Right>", lambda e: self._pv_key(1))
         self.bind("<Return>", lambda e: self._pv_key(1))
@@ -533,7 +601,12 @@ class DialogueBrowser(tk.Tk):
         if info is None:
             return
         if src is None:                                  # no hubo arrastre: era un clic normal
-            self._pv_cell_clicked(info[0], event)
+            if self._pv_click_job is not None:
+                self.after_cancel(self._pv_click_job)
+            self._pv_select_cell(info[0])
+            self._pv_click_job = self.after(
+                self._pv_double_click_delay(),
+                lambda slot=info[0], click_event=event: self._finish_pv_single_click(slot, click_event))
             return
         dst = self._pv_cell_at(event)
         if dst is None or dst == src:
@@ -541,36 +614,54 @@ class DialogueBrowser(tk.Tk):
             return
         self._pv_edit(lambda L: L.drag(src, dst))        # el ocupante de `dst` va a la vacía más próxima
 
-    def _pv_cell_clicked(self, k: int, event) -> None:
+    @staticmethod
+    def _pv_double_click_delay() -> int:
+        if sys.platform == "win32":
+            import ctypes
+            return int(ctypes.windll.user32.GetDoubleClickTime()) + 50
+        return 550
+
+    def _pv_select_cell(self, k: int) -> None:
         name = next((n for kk, n, *_ in self._pv_rects if kk == k), str(k))
         self._pv_sel = k
         self._pv_draw_cells()
         self._pv_status.config(text=f"Celda {name} seleccionada  ·  arrástrala para moverla")
-        lay = self._pv_layout()
-        if lay is not None and k not in lay.slots:
-            self._pv_pick(k)
-        else:
-            self._pv_menu(k, event)
+
+    def _finish_pv_single_click(self, k: int, event) -> None:
+        self._pv_click_job = None
+        self._pv_menu(k, event)
 
     def _pv_menu(self, k: int, event) -> None:
         lay = self._pv_layout()
         m = tk.Menu(self, tearoff=0)
-        m.add_command(label="Cambiar personaje / pose…", command=lambda: self._pv_pick(k))
-        if k in lay.slots:
-            m.add_command(label="Previsualizar su animación…", command=lambda: self._pv_open_tf_preview(k))
-        for j in range(1, lay.count + 1):
+        if self._pv_active_menu is not None:
+            self._pv_active_menu.unpost()
+        self._pv_active_menu = m
+        m.add_command(label="Seleccionar personaje y pose…",
+                      command=lambda: self._pv_menu_action(lambda: self._pv_pick(k)))
+        if lay is not None and k in lay.slots:
+            m.add_command(label="Editar efecto at…",
+                          command=lambda: self._pv_menu_action(
+                              lambda: self._pv_pick(k, initial_tab="Efectos")))
+        for j in range(1, lay.count + 1) if lay is not None else ():
             if j == k:
                 continue
             other = lay.slots.get(j)
             txt = (f"Intercambiar con {lay.name(j)} ({other.image})" if other is not None
                    else f"Mover a {lay.name(j)} (vacía)")
-            m.add_command(label=txt, command=lambda j=j: self._pv_edit(lambda L: L.swap(k, j)))
-        m.add_separator()
-        m.add_command(label="Quitar de la escena", command=lambda: self._pv_edit(lambda L: L.remove(k)))
-        try:
-            m.tk_popup(event.x_root, event.y_root)
-        finally:
-            m.grab_release()
+            m.add_command(label=txt, command=lambda j=j: self._pv_menu_action(
+                lambda: self._pv_edit(lambda L: L.swap(k, j))))
+        if lay is not None and k in lay.slots:
+            m.add_separator()
+            m.add_command(label="Quitar de la escena",
+                          command=lambda: self._pv_menu_action(lambda: self._pv_edit(lambda L: L.remove(k))))
+        m.post(event.x_root, event.y_root)
+
+    def _pv_menu_action(self, action) -> None:
+        if self._pv_active_menu is not None:
+            self._pv_active_menu.unpost()
+            self._pv_active_menu = None
+        action()
 
     def _pv_edit(self, fn) -> None:
         before = self._hist_begin()
@@ -592,7 +683,7 @@ class DialogueBrowser(tk.Tk):
             self._catalog = cells.SpriteCatalog(self.db, self.book)
         return self._catalog
 
-    def _pv_pick(self, k: int) -> None:
+    def _pv_pick(self, k: int, initial_tab: str = "Poses") -> None:
         lay = self._pv_layout()
         if lay is None:
             return
@@ -607,6 +698,9 @@ class DialogueBrowser(tk.Tk):
                           known=known, title=f"Celda {lay.name(k)}", db=self.db,
                           engine=self._pv_engine(), count=lay.count, slot=k,
                           bg=cur.stage.bg if cur is not None else "")
+        if initial_tab == "Efectos":
+            dlg.tfnb.select(dlg.effects_page)
+            dlg._on_tf_tab_changed()
         self._modal += 1
         try:
             self.wait_window(dlg)
@@ -614,17 +708,6 @@ class DialogueBrowser(tk.Tk):
             self._modal -= 1
         if dlg.result is not None:
             self._pv_edit(lambda L: L.place_at(dlg.transform, dlg.result, slot=k, reflow=dlg.reflow))
-
-    def _pv_open_tf_preview(self, k: int) -> None:
-        """Ventana de animación del personaje de la celda k con SU transform actual."""
-        lay = self._pv_layout()
-        eng = self._pv_engine()
-        if lay is None or eng is None or k not in lay.slots:
-            return
-        p = lay.slots[k]
-        cur = self._pv_frame()
-        _TransformPreview(self, eng, lambda: p.tag, lambda: p.attrs, lambda: lay.at_of(k),
-                          lay.count, k, cur.stage.bg if cur is not None else "")
 
     def _pv_copy(self) -> None:
         lay = self._pv_layout()
@@ -650,10 +733,19 @@ class DialogueBrowser(tk.Tk):
             return
         win = tk.Toplevel(self)
         win.title("Ajustes de la caja de texto leídos de tus .rpy")
-        txt = tk.Text(win, width=120, height=28, font=("Courier New", 9))
+        win.transient(self)
+        area = ttk.Frame(win)
+        area.pack(fill="both", expand=True)
+        txt = tk.Text(area, width=120, height=28, wrap="none", font=("Courier New", 9))
+        yscroll = ttk.Scrollbar(area, orient="vertical", command=txt.yview)
+        xscroll = ttk.Scrollbar(area, orient="horizontal", command=txt.xview)
+        txt.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        yscroll.pack(side="right", fill="y")
+        xscroll.pack(side="bottom", fill="x")
         txt.pack(fill="both", expand=True)
         txt.insert("1.0", "\n".join(eng.gui.describe()))
         txt.config(state="disabled")
+        fit_window(win, parent=self, min_size=(480, 300))
 
     # ------------------------------------------------------------------ escenarios (fondos y transiciones)
     def _scene_frame(self):
@@ -1149,6 +1241,23 @@ class DialogueBrowser(tk.Tk):
         if self._pv_in_textbox(event):
             self._edit_current_line()
             return "break"
+        k = self._pv_cell_at(event)
+        if k is not None:
+            if self._pv_click_job is not None:
+                self.after_cancel(self._pv_click_job)
+                self._pv_click_job = None
+            self._pv_press_info = self._pv_drag_src = None
+            self._pv_canvas.delete("drag")
+            self._pv_canvas.config(cursor="")
+            if self._pv_active_menu is not None:
+                self._pv_active_menu.unpost()
+                self._pv_active_menu = None
+            name = next((n for slot, n, *_ in self._pv_rects if slot == k), str(k))
+            self._pv_sel = k
+            self._pv_draw_cells()
+            self._pv_status.config(text=f"Abriendo selección de personaje y pose para {name}")
+            self._pv_pick(k)
+            return "break"
         return None
 
     def _pv_hover(self, event) -> None:
@@ -1351,9 +1460,7 @@ class _AskSave(tk.Toplevel):
         self.bind("<Return>", lambda e: self._done("save"))
         self.bind("<Escape>", lambda e: self._done("cancel"))
         self.update_idletasks()
-        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_width()) // 2
-        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_height()) // 3
-        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        fit_window(self, parent=master)
         ok.focus_set()
         self.grab_set()
 
@@ -1387,9 +1494,16 @@ class _DialogueEditor(tk.Toplevel):
             'Una línea por diálogo, tal como va en el script:  personaje [pose] "texto"  [with ...]\n'
             'Comillas dentro del texto: \\"   ·   salto de línea: \\n   ·   no añadas ni quites líneas. '
             "Tu comentario # de cada línea se conserva.")).pack(anchor="w", padx=10)
-        self.txt = tk.Text(self, width=110, height=min(max(self._n + 1, 5), 22), wrap="none", undo=True,
+        edit_area = ttk.Frame(self)
+        edit_area.pack(fill="both", expand=True, padx=10, pady=8)
+        self.txt = tk.Text(edit_area, width=95, height=min(max(self._n + 1, 5), 22), wrap="none", undo=True,
                            font=("Courier New", 10))
-        self.txt.pack(fill="both", expand=True, padx=10, pady=8)
+        yscroll = ttk.Scrollbar(edit_area, orient="vertical", command=self.txt.yview)
+        xscroll = ttk.Scrollbar(edit_area, orient="horizontal", command=self.txt.xview)
+        self.txt.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        yscroll.pack(side="right", fill="y")
+        xscroll.pack(side="bottom", fill="x")
+        self.txt.pack(side="left", fill="both", expand=True)
         self.txt.insert("1.0", "\n".join(codes))
         self.txt.edit_reset()
         self.msg = ttk.Label(self, text="", foreground="#b00000", wraplength=760, justify="left")
@@ -1402,6 +1516,13 @@ class _DialogueEditor(tk.Toplevel):
         self.txt.bind("<KeyRelease>", lambda e: self._check())
         self.bind("<Control-Return>", lambda e: (self._ok(), "break")[1])
         self.bind("<Escape>", lambda e: self.destroy())
+        self.resizable(True, True)
+        self.update_idletasks()
+        width, height = fit_window(
+            self, max(self.winfo_reqwidth(), 760), max(self.winfo_reqheight(), 420),
+            parent=master, min_size=(700, 380),
+        )
+        self.minsize(min(700, width), min(380, height))
         self.grab_set()
         self.txt.focus_set()
 
@@ -1521,9 +1642,7 @@ class _SayEditor(tk.Toplevel):
         self.bind("<Escape>", lambda e: self.destroy())
         self._refresh()
         self.update_idletasks()
-        x = master.winfo_rootx() + (master.winfo_width() - self.winfo_width()) // 2
-        y = master.winfo_rooty() + (master.winfo_height() - self.winfo_height()) // 3
-        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        fit_window(self, parent=master, min_size=(600, 360))
         self.grab_set()
         self.txt.focus_set()
 
@@ -1592,50 +1711,106 @@ def _photo(img, w: int, h: int):
 
 
 class _Strip(ttk.LabelFrame):
-    """Selector de miniaturas de 1 fila x 3 columnas, con ◀ ▶ para pasar de 3 en 3."""
+    """Selector de miniaturas con columnas adaptables y ◀ ▶ para cambiar de página."""
     COLS = 3
+    MIN_CARD_WIDTH = 170
 
-    def __init__(self, master, title: str, box, on_pick):
+    def __init__(self, master, title: str, box, on_pick, on_gallery):
         super().__init__(master, text=title, padding=(6, 4))
+        self.base_box = box
+        self.scale = 1.0
+        self.card_width = self.MIN_CARD_WIDTH
         self.box = box
         self.on_pick = on_pick
         self.items = []                   # [(clave, texto)]
         self.thumb = lambda key: None     # clave -> PhotoImage | None
         self.sel = None
         self.page = 0
+        self.columns = self.COLS
         self._photos = []
         self._cells = []
         self.btn_prev = ttk.Button(self, text="◀", width=3, command=lambda: self._turn(-1))
         self.btn_next = ttk.Button(self, text="▶", width=3, command=lambda: self._turn(1))
+        self.gallery_button = ttk.Button(self, text="Galería…", command=on_gallery)
         row = ttk.Frame(self)
         self.info = ttk.Label(self, text="")
         self.btn_prev.grid(row=0, column=0)
-        row.grid(row=0, column=1, padx=4)
+        row.grid(row=0, column=1, padx=4, sticky="ew")
         self.btn_next.grid(row=0, column=2)
-        self.info.grid(row=1, column=0, columnspan=3, pady=(2, 0))
-        for c in range(self.COLS):
-            fr = tk.Frame(row, width=box[0] + 14, height=box[1] + 32, bg=_BG, cursor="hand2",
-                          highlightthickness=3, highlightbackground=_BG, highlightcolor=_BG)
+        self.gallery_button.grid(row=0, column=3, padx=(4, 0))
+        self.info.grid(row=1, column=0, columnspan=4, pady=(2, 0))
+        self.columnconfigure(1, weight=1)
+        self.columnconfigure(3, weight=0)
+        self._row = row
+        self._columns_configured = 0
+        self.bind("<Configure>", self._resize_columns)
+        self._configure_columns()
+
+    @classmethod
+    def column_count(cls, width: int, card_width: Optional[int] = None) -> int:
+        return max(cls.COLS, width // (card_width or cls.MIN_CARD_WIDTH))
+
+    def _resize_columns(self, _event=None) -> None:
+        self.after_idle(self._configure_columns)
+
+    def _configure_columns(self) -> None:
+        width = self._row.winfo_width()
+        if not isinstance(width, int) or width <= 1:
+            width = self.winfo_width()
+        if not isinstance(width, int) or width <= 1:
+            return
+        columns = self.column_count(width, self.card_width)
+        if columns == self.columns and len(self._cells) >= columns:
+            return
+        self.columns = columns
+        while len(self._cells) < columns:
+            c = len(self._cells)
+            fr = tk.Frame(self._row, width=self.card_width, height=self.box[1] + 32, bg=_BG,
+                          cursor="hand2", highlightthickness=3,
+                          highlightbackground=_BG, highlightcolor=_BG)
             fr.pack_propagate(False)
-            fr.grid(row=0, column=c, padx=3)
             txt = tk.Label(fr, bg=_BG, fg="#ffffff", font=("TkDefaultFont", 9, "bold"))
             txt.pack(side="bottom")
             img = tk.Label(fr, bg=_BG, fg="#aaaaaa")
             img.pack(expand=True)
-            for w in (fr, img, txt):
-                w.bind("<Button-1>", lambda e, c=c: self._click(c))
+            for widget in (fr, img, txt):
+                widget.bind("<Button-1>", lambda _event, cell=c: self._click(cell))
             self._cells.append((fr, img, txt))
+        for column in range(max(columns, self._columns_configured)):
+            self._row.columnconfigure(column, weight=1 if column < columns else 0,
+                                      uniform="pose-strip" if column < columns else "")
+        self._columns_configured = columns
+        for column, (fr, _img, _txt) in enumerate(self._cells):
+            if column < columns:
+                fr.grid(row=0, column=column, padx=3, sticky="nsew")
+            else:
+                fr.grid_remove()
+        if self.items and self.sel is not None:
+            keys = [key for key, _label in self.items]
+            if self.sel in keys:
+                self.page = keys.index(self.sel) // columns
+        self.refresh()
+
+    def set_scale(self, scale: float) -> None:
+        self.scale = scale
+        self.box = (max(72, int(self.base_box[0] * scale)), max(68, int(self.base_box[1] * scale)))
+        self.card_width = max(120, int(self.MIN_CARD_WIDTH * scale))
+        for fr, _img, _txt in self._cells:
+            fr.config(width=self.card_width, height=self.box[1] + 32)
+        self._columns_configured = 0
+        self._configure_columns()
+        self.refresh()
 
     def set_items(self, items, thumb, sel=None) -> None:
         self.items, self.thumb, self.sel = list(items), thumb, sel
         keys = [k for k, _t in self.items]
-        self.page = (keys.index(sel) // self.COLS) if sel in keys else 0
+        self.page = (keys.index(sel) // self.columns) if sel in keys else 0
         self.refresh()
 
     def refresh(self) -> None:
         self._photos = []
-        start = self.page * self.COLS
-        for c, (fr, img, txt) in enumerate(self._cells):
+        start = self.page * self.columns
+        for c, (fr, img, txt) in enumerate(self._cells[:self.columns]):
             i = start + c
             if i < len(self.items):
                 key, label = self.items[i]
@@ -1649,30 +1824,124 @@ class _Strip(ttk.LabelFrame):
                 txt.config(text="")
                 color = _BG
             fr.config(highlightbackground=color, highlightcolor=color)
-        pages = max(1, -(-len(self.items) // self.COLS))
+        pages = max(1, -(-len(self.items) // self.columns))
         self.info.config(text=f"{self.page + 1} / {pages}   ·   {len(self.items)} en total")
         self.btn_prev.state(["!disabled"] if self.page > 0 else ["disabled"])
         self.btn_next.state(["!disabled"] if self.page < pages - 1 else ["disabled"])
 
     def _turn(self, d: int) -> None:
-        pages = max(1, -(-len(self.items) // self.COLS))
+        pages = max(1, -(-len(self.items) // self.columns))
         self.page = max(0, min(self.page + d, pages - 1))
         self.refresh()
 
     def _click(self, c: int) -> None:
-        i = self.page * self.COLS + c
+        i = self.page * self.columns + c
         if i < len(self.items):
-            self.sel = self.items[i][0]
-            self.refresh()
-            self.on_pick(self.sel)
+            key = self.items[i][0]
+            self.select(key)
+            self.on_pick(key)
+
+    def select(self, key) -> None:
+        keys = [item_key for item_key, _label in self.items]
+        self.sel = key if key in keys else None
+        if self.sel is not None:
+            self.page = keys.index(self.sel) // self.columns
+        self.refresh()
+
+
+class _SpriteGallery(tk.Toplevel):
+    """Ventana redimensionable con todas las expresiones y poses del personaje actual."""
+    TAB_NAMES = {"face": "Expresiones", "pose": "Poses"}
+    MIN_TILE_WIDTH = 122
+    FACE_THUMB_SIZE = (82, 72)
+    POSE_THUMB_SIZE = (92, 122)
+
+    def __init__(self, master, on_select, on_close):
+        super().__init__(master)
+        self.title("Galería de expresiones y poses")
+        self.resizable(True, True)
+        self.on_select = on_select
+        self.on_close = on_close
+        self._photos = {"face": [], "pose": []}
+        self._panels = {}
+        self._content = {}
+        self._tiles = {"face": [], "pose": []}
+        self._items = {}
+        self._selected = {}
+        self._columns = {"face": 0, "pose": 0}
+        self.nb = ttk.Notebook(self)
+        self.nb.pack(fill="both", expand=True, padx=8, pady=8)
+        for kind, title in self.TAB_NAMES.items():
+            page = ttk.Frame(self.nb)
+            scroll = _ScrollableFrame(page, padding=6)
+            scroll.pack(fill="both", expand=True)
+            scroll.canvas.bind("<Configure>", lambda event, tab=kind: self._layout(tab, event))
+            self.nb.add(page, text=title)
+            self._panels[kind] = scroll
+            self._content[kind] = scroll.content
+        self.bind("<Escape>", lambda _event: self._close())
+        self.protocol("WM_DELETE_WINDOW", self._close)
+        width, height = fit_window(self, 820, 620, parent=master, min_size=(480, 360))
+        self.minsize(min(480, width), min(360, height))
+
+    def _close(self) -> None:
+        self.on_close()
+        self.destroy()
+
+    @classmethod
+    def column_count(cls, width: int) -> int:
+        return max(1, width // cls.MIN_TILE_WIDTH)
+
+    def show_tab(self, kind: str) -> None:
+        self.nb.select(0 if kind == "face" else 1)
+
+    def refresh(self, kind: str, items, selected, thumb) -> None:
+        content = self._content[kind]
+        for tile in content.winfo_children():
+            tile.destroy()
+        self._photos[kind] = []
+        self._tiles[kind] = []
+        self._items[kind] = list(items)
+        self._selected[kind] = selected
+        for key, label in self._items[kind]:
+            photo = thumb(key)
+            self._photos[kind].append(photo)
+            tile = tk.Button(
+                content, text=f"✓ {label}" if key == selected else label,
+                image=photo if photo is not None else "",
+                compound="top", wraplength=110, padx=3, pady=3,
+                bg="#ffe680" if key == selected else "#f0f0f0",
+                activebackground="#ffe680" if key == selected else "#e5e5e5",
+                relief="solid" if key == selected else "raised",
+                bd=3 if key == selected else 1,
+                highlightthickness=0,
+                command=lambda choice=key: self.on_select(kind, choice),
+            )
+            tile.bind("<MouseWheel>", self._panels[kind]._wheel)
+            self._tiles[kind].append(tile)
+        self._layout(kind)
+
+    def _layout(self, kind: str, event=None) -> None:
+        content = self._content[kind]
+        width = event.width if event is not None else self._panels[kind].canvas.winfo_width()
+        if not isinstance(width, int) or width <= 1:
+            width = 600
+        columns = self.column_count(width)
+        for column in range(max(columns, self._columns[kind])):
+            content.columnconfigure(column, weight=1 if column < columns else 0,
+                                    uniform="sprite-gallery" if column < columns else "")
+        self._columns[kind] = columns
+        for index, tile in enumerate(self._tiles[kind]):
+            tile.grid(row=index // columns, column=index % columns, padx=4, pady=4, sticky="nsew")
+        self._panels[kind]._resize_content()
 
 
 class _PosePicker(tk.Toplevel):
     """Selector en dos pasos. Al aceptar: `result` = cells.Placement y `transform` = 't21'...
 
     Paso 1: los personajes, con su sprite de portada (pose 1).
-    Paso 2: rostros (los .png de cara) y poses (cuerpo) en tiras de 1 fila x 3 columnas, el
-            efecto/transform (`at`; pestaña «Efectos» o «Avanzado»), el zorder y el código `show` en vivo.
+    Paso 2: pestañas «Poses» (rostro y cuerpo) y «Efectos» (transform `at` con galería y preview),
+            además del zorder y el código `show` en vivo.
     Si la celda ya tiene a alguien, se abre directamente en el paso 2.
     """
 
@@ -1682,10 +1951,8 @@ class _PosePicker(tk.Toplevel):
         self._db, self._engine, self._count, self._slot, self._bg = db, engine, count, slot, bg
         self._effects = tfcatalog.effects(db) if db is not None else []
         self._syncing = False
-        self._pvw = None
         self.title(title)
-        self.transient(master)
-        self.resizable(False, False)
+        self.resizable(True, True)
         self.cat = catalog
         self.result = None
         self.transform = ""
@@ -1693,100 +1960,685 @@ class _PosePicker(tk.Toplevel):
         self._known = set(known or ())
         self._photos = []
         self._cache = {}                    # miniaturas ya generadas (PhotoImage)
+        self._gallery_thumb_cache = {}
+        self._gallery = None
+        self._ui_scale = 1.0
+        self._scale_job = None
+        self._at_gallery_cards = {}
+        self._at_gallery_columns = 0
+        self._at_gallery_photos = {}
+        self._at_gallery_context = None
+        self._at_gallery_loading = False
+        self._at_gallery_load_job = None
+        self._at_gallery_load_index = 0
+        self._at_gallery_load_token = 0
+        self._at_gallery_spinner_job = None
+        self._at_gallery_spinner_angle = 0
+        self._at_gallery_joke_shown = False
+        self._at_gallery_hover_key = None
+        self._at_gallery_hover_job = None
+        self._at_gallery_leave_job = None
+        self._at_gallery_hover_started = 0.0
+        self._at_gallery_hover_photo = None
+        self._at_preview_photo = None
+        self._at_preview_source_image = None
+        self._at_preview_job = None
+        self._at_preview_started = 0.0
+        self._at_preview_expr = None
+        self._at_preview_duration = 0.0
+        self._at_preview_loops = False
+        self._at_preview_finished = False
         self.pose = ""
         self.expr = ""
         self.tag = tk.StringVar(value=current.tag if current else "")
         self.z = tk.StringVar(value=str(current.zorder if current else 0))
         self.tf = tk.StringVar(value=default_transform)
-        self.step1 = ttk.Frame(self, padding=10)
-        self.step2 = ttk.Frame(self, padding=10)
+        self.step1_scroll = _ScrollableFrame(self, padding=10)
+        self.step2_scroll = _ScrollableFrame(self, padding=10, fit_width=True)
+        self.step1 = self.step1_scroll.content
+        self.step2 = self.step2_scroll.content
         self._build_step1()
         self._build_step2()
+        self._build_action_bars()
         self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Configure>", self._schedule_scale)
+        self.bind("<Destroy>", self._on_pose_picker_destroy, add="+")
+        width, height = 950, 700
+        width, height = fit_window(
+            self, width, height, parent=master,
+            min_size=(min(POSE_PICKER_MIN_SIZE[0], width), min(POSE_PICKER_MIN_SIZE[1], height)),
+        )
+        self.minsize(min(POSE_PICKER_MIN_SIZE[0], width), min(POSE_PICKER_MIN_SIZE[1], height))
         if current is not None and current.tag in self.cat.tags():
             self._go_step2(current.tag, current.attrs)
         else:
-            self.step1.pack()
+            self.step1_scroll.pack(fill="both", expand=True)
+            self.step1_actions.pack(fill="x")
+        self.update_idletasks()
+        self._apply_scale()
+        self.after_idle(self._settle_step2_layout)
         self.grab_set()
+
+    def _settle_step2_layout(self) -> None:
+        if not self.winfo_exists() or not self.tag.get():
+            return
+        self.update_idletasks()
+        for strip in (self.strip_face, self.strip_pose):
+            strip._configure_columns()
+        self.step2_scroll._resize_content()
+
+    def _build_action_bars(self) -> None:
+        self.action_bar = ttk.Frame(self, padding=(10, 4))
+        self.step1_actions = ttk.Frame(self.action_bar)
+        ttk.Button(self.step1_actions, text="Cancelar", command=self.destroy).pack(side="right")
+        self.step2_actions = ttk.Frame(self.action_bar)
+        ttk.Button(self.step2_actions, text="◀ Personajes", command=self._back).pack(side="left")
+        right = ttk.Frame(self.step2_actions)
+        right.pack(side="right")
+        ttk.Button(right, text="Cancelar", command=self.destroy).pack(side="left")
+        ttk.Button(right, text="Aceptar", command=self._ok).pack(side="left", padx=(6, 0))
+        self.action_bar.pack(side="bottom", fill="x")
 
     # ------------------------------------------------------------------ paso 1: personaje
     def _build_step1(self) -> None:
+        for column in range(4):
+            self.step1.columnconfigure(column, weight=1)
         ttk.Label(self.step1, text="Elige un personaje", font=("TkDefaultFont", 11, "bold")).grid(
             row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+        self._char_buttons = []
+        self._char_tags = list(self.cat.tags())
+        self._char_photos = []
         for i, tag in enumerate(self.cat.tags()):
             attrs = self.cat.default_preview(tag)
-            photo = _photo(self.cat.image(tag, attrs), 150, 190) if attrs else None
-            self._photos.append(photo)
+            photo = _photo(self.cat.image(tag, attrs), int(150 * self._ui_scale),
+                           int(190 * self._ui_scale)) if attrs else None
+            self._char_photos.append(photo)
             label = tag.capitalize() + (f"\n({tag} {' '.join(attrs)})" if attrs else "")
-            tk.Button(self.step1, text=label, image=photo, compound="top", padx=6, pady=6,
-                      command=lambda t=tag: self._go_step2(t)).grid(row=1 + i // 4, column=i % 4, padx=4, pady=4)
-        ttk.Button(self.step1, text="Cancelar", command=self.destroy).grid(
-            row=99, column=3, sticky="e", pady=(10, 0))
-
+            button = tk.Button(self.step1, text=label, image=photo, compound="top", padx=6, pady=6,
+                               command=lambda t=tag: self._go_step2(t))
+            button.grid(row=1 + i // 4, column=i % 4, padx=4, pady=4, sticky="nsew")
+            self._char_buttons.append(button)
     # ------------------------------------------------------------------ paso 2: rostro, pose, at, z
     def _build_step2(self) -> None:
         f = self.step2
+        f.columnconfigure(0, weight=1)
+        f.rowconfigure(1, weight=1)
         self.head = ttk.Label(f, text="", font=("TkDefaultFont", 11, "bold"))
-        self.head.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        pf = tk.Frame(f, width=250, height=330, bg=_BG)
+        self.head.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self.tfnb = ttk.Notebook(f)
+        self.tfnb.grid(row=1, column=0, sticky="nsew")
+        self.poses_page = ttk.Frame(self.tfnb, padding=8)
+        self.effects_page = ttk.Frame(self.tfnb, padding=8)
+        self.tfnb.add(self.poses_page, text="Poses")
+        self.tfnb.add(self.effects_page, text="Efectos")
+        self.tfnb.bind("<<NotebookTabChanged>>", self._on_tf_tab_changed)
+
+        poses = self.poses_page
+        poses.columnconfigure(1, weight=1)
+        poses.rowconfigure(0, weight=1)
+        pf = tk.Frame(poses, width=250, height=330, bg=_BG)
+        self._preview_frame = pf
         pf.pack_propagate(False)
-        pf.grid(row=1, column=0, rowspan=5, padx=(0, 10), sticky="n")
+        pf.grid(row=0, column=0, rowspan=3, padx=(0, 10), sticky="n")
         self.prev = tk.Label(pf, bg=_BG, fg="#ffffff")
         self.prev.pack(expand=True)
-        self.strip_face = _Strip(f, "Rostro (expresión)", (110, 100), self._pick_expr)
-        self.strip_pose = _Strip(f, "Pose (cuerpo)", (110, 150), self._pick_pose)
-        self.strip_face.grid(row=1, column=1, sticky="w")
-        self.strip_pose.grid(row=2, column=1, sticky="w", pady=(6, 0))
+        self.strip_face = _Strip(poses, "Rostro (expresión)", (110, 100), self._pick_expr,
+                                 lambda: self._open_gallery("face"))
+        self.strip_pose = _Strip(poses, "Pose (cuerpo)", (110, 150), self._pick_pose,
+                                 lambda: self._open_gallery("pose"))
+        self.strip_face.grid(row=0, column=1, sticky="ew")
+        self.strip_pose.grid(row=1, column=1, sticky="ew", pady=(6, 0))
+
+        effects = self.effects_page
+        effects.columnconfigure(0, weight=2)
+        effects.columnconfigure(1, weight=3)
+        effects.rowconfigure(0, weight=1)
+        left = ttk.Frame(effects)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(1, weight=0)
+        ttk.Label(left, text="Vista previa del efecto", font=("TkDefaultFont", 10, "bold")).grid(
+            row=0, column=0, sticky="w", pady=(0, 4))
+        at_preview_frame = tk.Frame(
+            left, width=AT_EFFECT_PREVIEW_SIZE[0], height=AT_EFFECT_PREVIEW_SIZE[1], bg="#000000",
+        )
+        self._at_preview_frame = at_preview_frame
+        at_preview_frame.grid(row=1, column=0, sticky="n")
+        at_preview_frame.grid_propagate(False)
+        self._at_preview_label = tk.Label(
+            at_preview_frame, bg="#000000", fg="#ffffff",
+            text="Selecciona un efecto para ver la preview",
+        )
+        self._at_preview_label.pack(fill="both", expand=True)
+        at_preview_frame.bind("<Configure>", self._on_at_preview_resize)
+        self._at_gallery_loader = tk.Frame(at_preview_frame, bg="#000000")
+        self._at_gallery_loader_content = tk.Frame(self._at_gallery_loader, bg="#000000")
+        self._at_gallery_loader_content.place(relx=0.5, rely=0.5, anchor="center")
+        self._at_gallery_spinner = tk.Canvas(
+            self._at_gallery_loader_content, width=44, height=44, bg="#000000", highlightthickness=0,
+        )
+        self._at_gallery_spinner.pack(pady=(0, 8))
+        self._at_gallery_status = tk.Label(
+            self._at_gallery_loader_content, text="", bg="#000000", fg="#ffffff",
+            justify="center", wraplength=340,
+        )
+        self._at_gallery_status.pack(fill="x", padx=8)
+        self._at_gallery_progress = ttk.Progressbar(
+            self._at_gallery_loader_content, mode="determinate", maximum=1, value=0,
+        )
+        self._at_gallery_progress.pack(fill="x", padx=24, pady=(8, 4))
+        self._at_gallery_detail = tk.Label(
+            self._at_gallery_loader_content, text="", bg="#000000", fg="#c8c8c8",
+            justify="center", wraplength=340,
+        )
+        self._at_gallery_detail.pack(fill="x", padx=8)
+        self._at_preview_controls = ttk.Frame(left)
+        self._at_preview_controls.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        self._at_preview_reload = ttk.Button(
+            self._at_preview_controls, text="Recargar preview",
+            command=self._reload_at_effect_preview,
+        )
+        self._at_preview_reload.pack(side="left")
+        self._at_preview_loop_var = tk.BooleanVar(value=False)
+        self._at_preview_loop_check = ttk.Checkbutton(
+            self._at_preview_controls, text="Mostrar en bucle",
+            variable=self._at_preview_loop_var,
+            command=self._toggle_at_effect_loop,
+        )
+        self._at_preview_loop_check.pack(side="left", padx=(10, 0))
+        self.fx_help = ttk.Label(left, text="", wraplength=340, justify="left")
+        self.fx_help.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(left, text="Transform «at» (edición avanzada):").grid(
+            row=4, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(
+            left, text="Ejemplos: t21 · hf32 · t21, hop · hop(x=400, z=0.9)",
+            wraplength=340, justify="left",
+        ).grid(row=5, column=0, sticky="w")
+        self._tf_entry = ttk.Entry(left, textvariable=self.tf, font=("Courier New", 10), width=54)
+        self._tf_entry.grid(row=6, column=0, sticky="ew", pady=(3, 0))
+        self.reflow_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            left, text="Reajustar a los demás personajes si es una posición (t21, hf32...)",
+            variable=self.reflow_var,
+        ).grid(row=7, column=0, sticky="w", pady=(4, 0))
+
+        gallery = ttk.Frame(effects)
+        gallery.grid(row=0, column=1, sticky="nsew")
+        gallery.rowconfigure(0, weight=1)
+        gallery.columnconfigure(0, weight=1)
+        self._at_gallery_scroll = _ScrollableFrame(gallery, padding=6, fit_width=True)
+        self._at_gallery_scroll.grid(row=0, column=0, sticky="nsew")
+        self._at_gallery_content = self._at_gallery_scroll.content
+        self._at_gallery_layout_job = None
+        self._at_gallery_scroll.canvas.bind("<Configure>", self._schedule_at_gallery_layout)
+        self._build_at_effect_gallery()
+
         opt = ttk.Frame(f)
-        opt.grid(row=3, column=1, sticky="w", pady=(8, 0))
+        opt.grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Label(opt, text="Z (capa):").pack(side="left")
         tk.Spinbox(opt, from_=-99, to=99, width=4, textvariable=self.z,
                    command=self._update).pack(side="left", padx=4)
         ttk.Label(opt, text="mayor = al frente").pack(side="left")
         self.z.trace_add("write", lambda *_: self._update_code())
-        # ---- transform: pestaña «Efectos» (lista corta, sin t11/t22...) y pestaña «Avanzado» (texto)
-        self.tfnb = ttk.Notebook(f)
-        self.tfnb.grid(row=4, column=1, sticky="we", pady=(8, 0))
-        fx = ttk.Frame(self.tfnb, padding=6)
-        self.tfnb.add(fx, text="Efectos")
-        sbf = ttk.Scrollbar(fx, orient="vertical")
-        sbf.pack(side="left", fill="y")                      # la barra se empaqueta antes que la lista
-        self.fx_list = tk.Listbox(fx, height=8, width=22, exportselection=False, yscrollcommand=sbf.set)
-        sbf.config(command=self.fx_list.yview)
-        self.fx_list.pack(side="left")
+        self.fx_list = tk.Listbox(self, height=0, width=0, exportselection=False)
+        self._fx_list = self.fx_list
         for e in self._effects:
             self.fx_list.insert("end", e.label + ("" if e.known else "   · propio"))
         self.fx_list.bind("<<ListboxSelect>>", self._on_effect)
-        side = ttk.Frame(fx)
-        side.pack(side="left", fill="both", expand=True, padx=(10, 0))
-        self.fx_help = ttk.Label(side, text="", wraplength=250, justify="left")
-        self.fx_help.pack(anchor="w")
-        ttk.Button(side, text="▶ Previsualizar animación…", command=self._open_preview).pack(anchor="w", pady=(10, 0))
-        adv = ttk.Frame(self.tfnb, padding=6)
-        self.tfnb.add(adv, text="Avanzado (texto)")
-        ttk.Label(adv, justify="left", text=(
-            "Transform tal como va tras «at» (texto original). Escribe lo que quieras:\n"
-            "  t21   ·   hf32   ·   t21, hop   ·   hop(x=400, z=0.9)   ·   mi_pos")).pack(anchor="w")
-        ttk.Entry(adv, textvariable=self.tf, font=("Courier New", 10), width=54).pack(anchor="w", pady=(6, 0))
-        self.reflow_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(adv, text="Reajustar a los demás personajes si es una posición (t21, hf32...)",
-                        variable=self.reflow_var).pack(anchor="w", pady=(6, 0))
-        ttk.Button(adv, text="▶ Previsualizar animación…", command=self._open_preview).pack(anchor="w", pady=(6, 0))
         self.tf.trace_add("write", lambda *_: self._on_tf_changed())
-        self.code = tk.Entry(f, font=("Courier New", 10), state="readonly", width=48,
+        self.code = tk.Entry(f, font=("Courier New", 10), state="readonly", width=42,
                              readonlybackground="#f2f2f2")
-        self.code.grid(row=5, column=1, sticky="we", pady=(8, 0))
+        self.code.grid(row=3, column=0, sticky="ew", pady=(6, 0))
         self.tf_msg = ttk.Label(f, text="", wraplength=380, justify="left")
-        self.tf_msg.grid(row=6, column=1, sticky="w")
-        btns = ttk.Frame(f)
-        btns.grid(row=7, column=0, columnspan=2, sticky="e", pady=(12, 0))
-        ttk.Button(btns, text="◀ Personajes", command=self._back).pack(side="left", padx=(0, 40))
-        ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side="left")
-        ttk.Button(btns, text="Aceptar", command=self._ok).pack(side="left", padx=6)
+        self.tf_msg.grid(row=4, column=0, sticky="ew")
+
+    def _build_at_effect_gallery(self) -> None:
+        for effect in self._effects:
+            frame = tk.Frame(
+                self._at_gallery_content, bd=0, highlightthickness=1,
+                highlightbackground="#b8b8b8",
+            )
+            canvas = tk.Canvas(
+                frame, width=AT_EFFECT_CARD_SIZE[0], height=AT_EFFECT_CARD_SIZE[1],
+                highlightthickness=0, bg="#101010",
+            )
+            canvas.pack(padx=3, pady=(3, 1))
+            label = ttk.Label(
+                frame, text="", anchor="center", justify="center",
+                wraplength=AT_EFFECT_CARD_SIZE[0],
+            )
+            label.pack(fill="x", padx=2, pady=(0, 3))
+            for widget in (frame, canvas, label):
+                widget.bind("<Button-1>", lambda _event, key=effect.name: self._select_at_effect_card(key))
+                widget.bind("<MouseWheel>", self._at_gallery_scroll._wheel)
+                widget.bind("<Enter>", lambda _event, key=effect.name: self._on_at_effect_card_enter(key))
+                widget.bind("<Leave>", lambda _event, key=effect.name: self._on_at_effect_card_leave(key))
+            self._at_gallery_cards[effect.name] = {
+                "frame": frame, "canvas": canvas, "label": label, "effect": effect,
+            }
+        self._layout_at_gallery()
+        self._update_at_effect_selection()
+
+    @staticmethod
+    def _at_effect_column_count(width: int) -> int:
+        return max(3, width // AT_EFFECT_CARD_MIN_WIDTH)
+
+    def _layout_at_gallery(self, event=None) -> None:
+        if not hasattr(self, "_at_gallery_scroll"):
+            return
+        content = self._at_gallery_content
+        width = (event.width if event is not None and event.width > 1
+                 else self._at_gallery_scroll.canvas.winfo_width())
+        if not isinstance(width, int) or width <= 1:
+            width = 600
+        columns = self._at_effect_column_count(width)
+        for column in range(max(columns, self._at_gallery_columns)):
+            content.columnconfigure(
+                column,
+                weight=1 if column < columns else 0,
+                uniform="at-effect-cards" if column < columns else "",
+            )
+        self._at_gallery_columns = columns
+        for index, card in enumerate(self._at_gallery_cards.values()):
+            card["frame"].grid(row=index // columns, column=index % columns, padx=3, pady=3, sticky="nsew")
+        self._at_gallery_scroll._resize_content()
+
+    def _schedule_at_gallery_layout(self, _event=None) -> None:
+        if self._at_gallery_layout_job is not None:
+            self.after_cancel(self._at_gallery_layout_job)
+        self._at_gallery_layout_job = self.after_idle(self._run_at_gallery_layout)
+
+    def _run_at_gallery_layout(self) -> None:
+        self._at_gallery_layout_job = None
+        if self.winfo_exists():
+            self._layout_at_gallery()
+
+    def _on_tf_tab_changed(self, _event=None) -> None:
+        if self.tfnb.select() == str(self.effects_page):
+            self._schedule_at_gallery_layout()
+            self._refresh_at_effect_gallery()
+            self._refresh_at_effect_preview()
+        else:
+            self._stop_at_effect_preview()
+
+    def _at_effect_text(self, effect) -> str:
+        return tfcatalog.resolve(effect, self._count, self._slot, self._defined())
+
+    def _at_effect_context(self):
+        return self.tag.get(), tuple(self._attrs() or ()), self.expr, self._bg
+
+    def _at_effect_image(self, effect_name: str, t):
+        effect = next(item for item in self._effects if item.name == effect_name)
+        text = self._at_effect_text(effect)
+        return self._engine.sprite_frame(
+            self.tag.get(), self._attrs() or (), text, "show", t,
+            f"t{self._count}{self._slot}", self._bg, quick=True,
+        )
+
+    def _at_effect_static_photo(self, effect):
+        text = self._at_effect_text(effect)
+        cache_key = (*self._at_gallery_context, text, AT_EFFECT_CARD_SIZE)
+        if cache_key not in self._at_gallery_photos:
+            duration = self._engine.lib.duration_expr(text, "show")
+            t = (min(duration / 2, 1.0) if duration > 0 else None)
+            if self._engine.lib.loops_expr(text, "show"):
+                t = 1.0
+            image = self._at_effect_image(effect.name, t)
+            self._at_gallery_photos[cache_key] = _photo(image, *AT_EFFECT_CARD_SIZE)
+        return self._at_gallery_photos[cache_key]
+
+    def _refresh_at_effect_gallery(self) -> None:
+        if not self.tag.get():
+            return
+        context = self._at_effect_context()
+        if context != self._at_gallery_context:
+            self._stop_at_effect_hover(render_static=False)
+            self._cancel_at_gallery_load()
+            self._at_gallery_context = context
+            self._at_gallery_photos.clear()
+            if self._engine is None or not HAVE_TKIMG:
+                self._show_unavailable_at_effects()
+            elif self._at_gallery_cards:
+                self._start_at_gallery_load()
+            else:
+                self._update_at_effect_selection()
+        elif not self._at_gallery_loading:
+            self._update_at_effect_selection()
+        self._at_gallery_scroll._resize_content()
+
+    def _show_unavailable_at_effects(self) -> None:
+        for card in self._at_gallery_cards.values():
+            card["canvas"].delete("all")
+            card["canvas"].create_text(
+                AT_EFFECT_CARD_SIZE[0] // 2, AT_EFFECT_CARD_SIZE[1] // 2,
+                text="Vista previa no disponible", fill="#ffffff", width=AT_EFFECT_CARD_SIZE[0] - 8,
+            )
+        self._update_at_effect_selection()
+
+    def _start_at_gallery_load(self) -> None:
+        self._at_gallery_loading = True
+        self._at_gallery_load_token += 1
+        token = self._at_gallery_load_token
+        self._at_gallery_load_index = 0
+        self._at_gallery_joke_shown = False
+        self._at_gallery_loader.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self._at_gallery_loader.lift()
+        self._at_preview_label.config(image="", text="")
+        self._at_gallery_progress.configure(maximum=max(len(self._effects), 1), value=0)
+        self._at_gallery_status.config(text="Leyendo efectos del personaje…")
+        self._at_gallery_detail.config(text="Preparando la caché de previews")
+        self._animate_at_gallery_spinner()
+        self._at_gallery_load_job = self.after(
+            180, lambda current_token=token: self._cache_next_at_effect(current_token),
+        )
+
+    def _cancel_at_gallery_load(self, hide: bool = True) -> None:
+        self._at_gallery_load_token += 1
+        if self._at_gallery_load_job is not None:
+            self.after_cancel(self._at_gallery_load_job)
+            self._at_gallery_load_job = None
+        if self._at_gallery_spinner_job is not None:
+            self.after_cancel(self._at_gallery_spinner_job)
+            self._at_gallery_spinner_job = None
+        self._at_gallery_loading = False
+        if hide:
+            self._at_gallery_loader.place_forget()
+
+    def _animate_at_gallery_spinner(self) -> None:
+        if not self._at_gallery_loading:
+            return
+        canvas = self._at_gallery_spinner
+        canvas.delete("all")
+        canvas.create_oval(5, 5, 39, 39, outline="#454545", width=4)
+        canvas.create_arc(
+            5, 5, 39, 39, start=self._at_gallery_spinner_angle,
+            extent=250, style="arc", outline="#67b7ff", width=4,
+        )
+        self._at_gallery_spinner_angle = (self._at_gallery_spinner_angle - 24) % 360
+        self._at_gallery_spinner_job = self.after(70, self._animate_at_gallery_spinner)
+
+    def _cache_next_at_effect(self, token: int) -> None:
+        self._at_gallery_load_job = None
+        if token != self._at_gallery_load_token or not self._at_gallery_loading:
+            return
+        if self._at_gallery_load_index >= len(self._effects):
+            self._finish_at_gallery_load()
+            return
+        index = self._at_gallery_load_index
+        effect = self._effects[index]
+        self._at_gallery_status.config(
+            text=f"Cargando previews: {index + 1} de {len(self._effects)}",
+        )
+        self._at_gallery_detail.config(text="Almacenando miniaturas en caché…")
+        try:
+            photo = self._at_effect_static_photo(effect)
+        except Exception as exc:
+            self._cancel_at_gallery_load()
+            messagebox.showerror(
+                "Error al cargar previews",
+                f"No se pudo generar la preview del efecto «{effect.label}»:\n{exc}",
+                parent=self,
+            )
+            return
+        self._draw_at_effect_card(effect.name, photo)
+        self._at_gallery_load_index += 1
+        self._at_gallery_progress.configure(value=self._at_gallery_load_index)
+        if self._at_gallery_load_index >= max(1, (len(self._effects) * 9 + 9) // 10):
+            self._at_gallery_joke_shown = True
+            self._at_gallery_detail.config(text="Esperar a que Monika revise el script")
+        self._at_gallery_load_job = self.after(
+            500 if self._at_gallery_joke_shown else 60,
+            lambda current_token=token: self._cache_next_at_effect(current_token),
+        )
+
+    def _finish_at_gallery_load(self) -> None:
+        self._at_gallery_loading = False
+        if self._at_gallery_spinner_job is not None:
+            self.after_cancel(self._at_gallery_spinner_job)
+            self._at_gallery_spinner_job = None
+        self._at_gallery_loader.place_forget()
+        self._update_at_effect_selection()
+        self._at_gallery_scroll._resize_content()
+        self._refresh_at_effect_preview(force=True)
+
+    def _refresh_at_effect_preview(self, force: bool = False) -> None:
+        if (self.tfnb.select() != str(self.effects_page) or not self.tag.get()
+                or self._engine is None or not HAVE_TKIMG):
+            self._stop_at_effect_preview()
+            return
+        expression = self.tf.get().strip()
+        context = (*self._at_effect_context(), expression)
+        if force or context != self._at_preview_expr:
+            self._stop_at_effect_preview()
+            self._at_preview_expr = context
+            self._at_preview_started = time.monotonic()
+            self._at_preview_duration = self._engine.lib.duration_expr(expression, "show")
+            self._at_preview_loops = bool(self._at_preview_loop_var.get())
+            self._at_preview_finished = False
+        if self._at_preview_finished or self._at_preview_job is not None:
+            return
+        if self._at_preview_duration <= 0 and not self._at_preview_loops:
+            self._draw_at_effect_preview(None)
+            self._at_preview_finished = True
+            return
+        self._tick_at_effect_preview()
+
+    def _stop_at_effect_preview(self) -> None:
+        if self._at_preview_job is not None:
+            self.after_cancel(self._at_preview_job)
+            self._at_preview_job = None
+
+    def _on_pose_picker_destroy(self, event) -> None:
+        if event.widget is self:
+            self._stop_at_effect_preview()
+            self._stop_at_effect_hover(render_static=False)
+            self._cancel_at_gallery_load(hide=False)
+            if self._at_gallery_layout_job is not None:
+                self.after_cancel(self._at_gallery_layout_job)
+                self._at_gallery_layout_job = None
+
+    def _tick_at_effect_preview(self) -> None:
+        self._at_preview_job = None
+        if self.tfnb.select() != str(self.effects_page):
+            return
+        elapsed = time.monotonic() - self._at_preview_started
+        if self._at_preview_loops and self._at_preview_duration > 0:
+            elapsed %= self._at_preview_duration
+        elif elapsed >= self._at_preview_duration:
+            self._draw_at_effect_preview(None)
+            self._at_preview_finished = True
+            return
+        self._draw_at_effect_preview(elapsed)
+        self._at_preview_job = self.after(33, self._tick_at_effect_preview)
+
+    def _draw_at_effect_preview(self, elapsed) -> None:
+        image = self._engine.sprite_frame(
+            self.tag.get(), self._attrs() or (), self.tf.get().strip(), "show", elapsed,
+            f"t{self._count}{self._slot}", self._bg, quick=True,
+        )
+        self._at_preview_source_image = image
+        self._show_at_effect_preview_image(image)
+
+    def _on_at_preview_resize(self, _event=None) -> None:
+        if self._at_preview_source_image is not None:
+            self._show_at_effect_preview_image(self._at_preview_source_image)
+
+    def _show_at_effect_preview_image(self, image) -> None:
+        width = int(AT_EFFECT_PREVIEW_SIZE[0] * self._ui_scale)
+        height = int(AT_EFFECT_PREVIEW_SIZE[1] * self._ui_scale)
+        self._at_preview_photo = _photo(image, width, height)
+        self._at_preview_label.config(
+            image=self._at_preview_photo if self._at_preview_photo is not None else "",
+            text="" if self._at_preview_photo is not None else "(vista previa no disponible)",
+            compound="center",
+        )
+
+    def _reload_at_effect_preview(self) -> None:
+        self._at_preview_expr = None
+        self._at_preview_finished = False
+        self._at_preview_loops = bool(self._at_preview_loop_var.get())
+        self._at_gallery_loader.place_forget()
+        self._stop_at_effect_preview()
+        self._refresh_at_effect_preview(force=True)
+
+    def _toggle_at_effect_loop(self) -> None:
+        self._at_preview_loops = bool(self._at_preview_loop_var.get())
+        self._at_gallery_loader.place_forget()
+        self._refresh_at_effect_preview(force=True)
+
+    def _draw_at_effect_card(self, effect_name: str, photo) -> None:
+        canvas = self._at_gallery_cards[effect_name]["canvas"]
+        canvas.delete("all")
+        if photo is not None:
+            canvas.create_image(
+                AT_EFFECT_CARD_SIZE[0] // 2, AT_EFFECT_CARD_SIZE[1] // 2,
+                anchor="center", image=photo,
+            )
+
+    def _update_at_effect_selection(self) -> None:
+        selected = tfcatalog.effect_of(self.tf.get(), self._db) if self._db is not None else None
+        selected_name = None
+        if selected is not None and self._at_effect_text(selected) == self.tf.get().strip():
+            selected_name = selected.name
+        for key, card in self._at_gallery_cards.items():
+            is_selected = key == selected_name
+            frame = card["frame"]
+            frame.configure(
+                highlightthickness=3 if is_selected else 1,
+                highlightbackground="#2376b5" if is_selected else "#b8b8b8",
+            )
+            effect = card["effect"]
+            suffix = "   · propio" if not effect.known else ""
+            card["label"].configure(
+                text=("✓ " if is_selected else "") +
+                f"{effect.label}{suffix}\nat {self._at_effect_text(effect)}",
+            )
+
+    def _select_at_effect_card(self, effect_name: str) -> None:
+        index = next(
+            (i for i, effect in enumerate(self._effects) if effect.name == effect_name),
+            None,
+        )
+        if index is None:
+            return
+        self.fx_list.selection_clear(0, "end")
+        self.fx_list.selection_set(index)
+        self.fx_list.see(index)
+        self._on_effect()
+
+    def _on_at_effect_card_enter(self, effect_name: str) -> None:
+        if self._engine is None or not HAVE_TKIMG or self._at_gallery_context is None:
+            return
+        if effect_name == self._at_gallery_hover_key:
+            return
+        self._stop_at_effect_hover(render_static=True)
+        effect = self._at_gallery_cards[effect_name]["effect"]
+        text = self._at_effect_text(effect)
+        if (self._engine.lib.duration_expr(text, "show") <= 0
+                and not self._engine.lib.loops_expr(text, "show")):
+            return
+        self._at_gallery_hover_key = effect_name
+        self._at_gallery_hover_started = time.monotonic()
+        self._render_at_effect_hover(effect_name, 0.0)
+        self._at_gallery_hover_job = self.after(
+            33, lambda key=effect_name: self._tick_at_effect_hover(key),
+        )
+
+    def _on_at_effect_card_leave(self, effect_name: str) -> None:
+        if effect_name != self._at_gallery_hover_key or self._at_gallery_leave_job is not None:
+            return
+        self._at_gallery_leave_job = self.after(
+            40, lambda key=effect_name: self._finish_at_effect_leave(key),
+        )
+
+    def _finish_at_effect_leave(self, effect_name: str) -> None:
+        self._at_gallery_leave_job = None
+        card = self._at_gallery_cards.get(effect_name)
+        if card is None:
+            return
+        frame = card["frame"]
+        x, y = self.winfo_pointerx(), self.winfo_pointery()
+        inside = (frame.winfo_rootx() <= x < frame.winfo_rootx() + frame.winfo_width()
+                  and frame.winfo_rooty() <= y < frame.winfo_rooty() + frame.winfo_height())
+        if not inside:
+            self._stop_at_effect_hover(render_static=True)
+
+    def _stop_at_effect_hover(self, render_static: bool) -> None:
+        if self._at_gallery_hover_job is not None:
+            self.after_cancel(self._at_gallery_hover_job)
+            self._at_gallery_hover_job = None
+        if self._at_gallery_leave_job is not None:
+            self.after_cancel(self._at_gallery_leave_job)
+            self._at_gallery_leave_job = None
+        effect_name = self._at_gallery_hover_key
+        self._at_gallery_hover_key = None
+        self._at_gallery_hover_photo = None
+        if render_static and effect_name in self._at_gallery_cards:
+            self._draw_at_effect_card(
+                effect_name, self._at_effect_static_photo(self._at_gallery_cards[effect_name]["effect"]),
+            )
+
+    def _render_at_effect_hover(self, effect_name: str, elapsed: float) -> None:
+        if self._engine is None:
+            return
+        card = self._at_gallery_cards[effect_name]
+        text = self._at_effect_text(card["effect"])
+        duration = self._engine.lib.duration_expr(text, "show")
+        if duration > 0 and not self._engine.lib.loops_expr(text, "show"):
+            elapsed %= duration
+        image = self._at_effect_image(effect_name, elapsed)
+        self._at_gallery_hover_photo = _photo(image, *AT_EFFECT_CARD_SIZE)
+        self._draw_at_effect_card(effect_name, self._at_gallery_hover_photo)
+
+    def _tick_at_effect_hover(self, effect_name: str) -> None:
+        if effect_name != self._at_gallery_hover_key:
+            return
+        self._render_at_effect_hover(effect_name, time.monotonic() - self._at_gallery_hover_started)
+        self._at_gallery_hover_job = self.after(
+            33, lambda key=effect_name: self._tick_at_effect_hover(key),
+        )
 
     # ------------------------------------------------------------------ efectos <-> texto
     def _defined(self) -> set:
         return set(self._known)
+
+    def _schedule_scale(self, event=None) -> None:
+        if event is not None and event.widget is not self:
+            return
+        if self._scale_job is not None:
+            self.after_cancel(self._scale_job)
+        self._scale_job = self.after(80, self._apply_scale)
+
+    def _apply_scale(self) -> None:
+        self._scale_job = None
+        width, height = max(self.winfo_width(), 1), max(self.winfo_height(), 1)
+        scale = max(0.65, min(1.0, width / 950, height / 700))
+        if abs(scale - self._ui_scale) < 0.025:
+            self.after_idle(self._settle_step2_layout)
+            return
+        self._ui_scale = scale
+        self._preview_frame.config(width=int(250 * scale), height=int(330 * scale))
+        for strip in (self.strip_face, self.strip_pose):
+            strip.set_scale(scale)
+        self._tf_entry.config(width=max(36, int(54 * scale)))
+        self._at_preview_frame.config(
+            width=int(AT_EFFECT_PREVIEW_SIZE[0] * scale),
+            height=int(AT_EFFECT_PREVIEW_SIZE[1] * scale),
+        )
+        self.fx_help.config(wraplength=int(340 * scale))
+        self._cache.clear()
+        self._char_photos = []
+        for tag, button in zip(self._char_tags, self._char_buttons):
+            attrs = self.cat.default_preview(tag)
+            photo = _photo(self.cat.image(tag, attrs), int(150 * scale), int(190 * scale)) if attrs else None
+            self._char_photos.append(photo)
+            button.config(image=photo if photo is not None else "")
+        if self.tag.get():
+            self.strip_face.refresh()
+            self.strip_pose.refresh()
+            self._update()
+            self._refresh_at_effect_preview()
+        self.after_idle(self._settle_step2_layout)
 
     def _on_effect(self, _e=None) -> None:
         sel = self.fx_list.curselection()
@@ -1800,6 +2652,8 @@ class _PosePicker(tk.Toplevel):
         finally:
             self._syncing = False
         self._show_effect_help(eff, text)
+        self._update_at_effect_selection()
+        self._reload_at_effect_preview()
 
     def _show_effect_help(self, eff, text: str) -> None:
         self.fx_help.config(text=f"{eff.help}\n\nSe escribe:  at {text}" if eff else "")
@@ -1817,23 +2671,12 @@ class _PosePicker(tk.Toplevel):
                 self.fx_list.see(i)
                 self._show_effect_help(eff, self.tf.get().strip())
             else:
-                self.fx_help.config(text="Transform personalizado (se edita en la pestaña «Avanzado»).\n\n"
+                self.fx_help.config(text="Transform personalizado (edítalo en el campo «at»).\n\n"
                                          f"Se escribe:  at {self.tf.get().strip()}")
         self._update_code()
-        if self._pvw is not None and self._pvw.winfo_exists():
-            self._pvw.refresh()
-
-    def _open_preview(self) -> None:
-        if self._engine is None:
-            messagebox.showinfo("Previsualizar", "Hace falta Pillow para dibujar la animación:\n"
-                                "py -3 -m pip install pillow", parent=self)
-            return
-        if self._pvw is not None and self._pvw.winfo_exists():
-            self._pvw.lift()
-            self._pvw.refresh()
-            return
-        self._pvw = _TransformPreview(self, self._engine, self.tag.get, self._attrs, self.tf.get,
-                                      self._count, self._slot, self._bg)
+        self._update_at_effect_selection()
+        if not self._syncing:
+            self._refresh_at_effect_preview()
 
     def _go_step2(self, tag, attrs=None) -> None:
         self.tag.set(tag)
@@ -1851,14 +2694,24 @@ class _PosePicker(tk.Toplevel):
                                   self._pose_thumb, self.pose)
         self._reload_faces()
         self._on_tf_changed()
-        self.step1.pack_forget()
-        self.step2.pack()
+        self.step1_scroll.pack_forget()
+        self.step2_scroll.pack(fill="both", expand=True)
+        self.step1_actions.pack_forget()
+        self.step2_actions.pack(fill="x")
         self.bind("<Return>", lambda e: self._ok())
+        self._refresh_sprite_gallery()
+        self._on_tf_tab_changed()
+        self.after_idle(self._settle_step2_layout)
 
     def _back(self) -> None:
-        self.step2.pack_forget()
-        self.step1.pack()
+        self.step2_scroll.pack_forget()
+        self.step1_scroll.pack(fill="both", expand=True)
+        self.step2_actions.pack_forget()
+        self.step1_actions.pack(fill="x")
         self.unbind("<Return>")
+        if self._gallery is not None and self._gallery.winfo_exists():
+            self._gallery.destroy()
+            self._gallery = None
 
     def _reload_faces(self) -> None:
         tag = self.tag.get()
@@ -1871,12 +2724,64 @@ class _PosePicker(tk.Toplevel):
     def _pick_pose(self, pose) -> None:
         self.pose = pose
         self._reload_faces()
-        self.strip_pose.refresh()           # por si la expresión cambió (no todas las poses tienen todas)
+        self.strip_pose.select(pose)         # la selección también puede venir de la galería
+        self._refresh_sprite_gallery()
+        self._on_tf_tab_changed()
 
     def _pick_expr(self, expr) -> None:
         self.expr = expr
+        self.strip_face.select(expr)
         self.strip_pose.refresh()           # la pose se ve con el rostro elegido
         self._update()
+        self._refresh_sprite_gallery()
+        self._on_tf_tab_changed()
+
+    def _open_gallery(self, kind: str) -> None:
+        if self._gallery is None or not self._gallery.winfo_exists():
+            self._gallery = _SpriteGallery(self, self._select_gallery_item, self._gallery_closed)
+        self._refresh_sprite_gallery()
+        self._gallery.show_tab(kind)
+        self._gallery.lift()
+
+    def _gallery_closed(self) -> None:
+        self._gallery = None
+
+    def _gallery_items(self, kind: str):
+        tag = self.tag.get()
+        if kind == "face":
+            return [(expr, expr or "(única)") for expr in self.cat.exprs(tag, self.pose)]
+        return [(pose, f"{pose} · {cells.outfit_label(pose)}") for pose in self.cat.poses(tag)]
+
+    def _gallery_thumb(self, kind: str, key: str):
+        tag = self.tag.get()
+        if kind == "face":
+            cache_key = (kind, tag, self.pose, key)
+            if cache_key not in self._gallery_thumb_cache:
+                image = self.cat.face_image(tag, self.pose, key) or self.cat.sprite_image(tag, self.pose, key)
+                self._gallery_thumb_cache[cache_key] = _photo(image, *_SpriteGallery.FACE_THUMB_SIZE)
+        else:
+            expr = self.expr if self.cat.combo(tag, key, self.expr) else (
+                (self.cat.exprs(tag, key) or [""])[0])
+            cache_key = (kind, tag, key, expr)
+            if cache_key not in self._gallery_thumb_cache:
+                self._gallery_thumb_cache[cache_key] = _photo(
+                    self.cat.sprite_image(tag, key, expr), *_SpriteGallery.POSE_THUMB_SIZE)
+        return self._gallery_thumb_cache[cache_key]
+
+    def _refresh_sprite_gallery(self) -> None:
+        if self._gallery is None or not self._gallery.winfo_exists() or not self.tag.get():
+            return
+        self._gallery.title(f"Galería · {self.tag.get().capitalize()}")
+        for kind in ("face", "pose"):
+            selected = self.expr if kind == "face" else self.pose
+            self._gallery.refresh(kind, self._gallery_items(kind), selected,
+                                  lambda key, tab=kind: self._gallery_thumb(tab, key))
+
+    def _select_gallery_item(self, kind: str, key: str) -> None:
+        if kind == "face":
+            self._pick_expr(key)
+        else:
+            self._pick_pose(key)
 
     # ------------------------------------------------------------------ miniaturas
     def _face_thumb(self, expr):
@@ -1884,7 +2789,7 @@ class _PosePicker(tk.Toplevel):
         if key not in self._cache:
             tag = self.tag.get()
             img = self.cat.face_image(tag, self.pose, expr) or self.cat.sprite_image(tag, self.pose, expr)
-            self._cache[key] = _photo(img, 110, 100)
+            self._cache[key] = _photo(img, *self.strip_face.box)
         return self._cache[key]
 
     def _pose_thumb(self, pose):
@@ -1893,7 +2798,7 @@ class _PosePicker(tk.Toplevel):
             (self.cat.exprs(tag, pose) or [""])[0])
         key = ("p", tag, pose, expr)
         if key not in self._cache:
-            self._cache[key] = _photo(self.cat.sprite_image(tag, pose, expr), 110, 150)
+            self._cache[key] = _photo(self.cat.sprite_image(tag, pose, expr), *self.strip_pose.box)
         return self._cache[key]
 
     # ------------------------------------------------------------------ vista previa y código
@@ -1908,7 +2813,7 @@ class _PosePicker(tk.Toplevel):
 
     def _update(self) -> None:
         img = self.cat.sprite_image(self.tag.get(), self.pose, self.expr)
-        photo = _photo(img, 240, 320)
+        photo = _photo(img, int(240 * self._ui_scale), int(320 * self._ui_scale))
         self._last = photo                    # Tk descarta la imagen si no se guarda
         self.prev.config(image=photo if photo is not None else "",
                          text="" if photo is not None else "(sin vista previa:\nfaltan los PNG o Pillow)")
@@ -1949,166 +2854,6 @@ class _PosePicker(tk.Toplevel):
         self.transform = self.tf.get().strip()
         self.reflow = bool(self.reflow_var.get())
         self.destroy()
-
-
-class _TransformPreview(tk.Toplevel):
-    """Ventana dedicada para ver, en vivo, la animación de un transform aplicada a un personaje.
-
-    Dibuja SOLO a ese personaje (con la pose/rostro elegidos) sobre el fondo de la escena, usando el
-    mismo motor ATL que el preview principal. Se puede reproducir la entrada (`show`), el cambio de
-    posición (`replace`) o la salida (`hide`), en bucle, a distinta velocidad o arrastrando la barra de
-    tiempo. Se actualiza sola si cambias el texto del transform en el selector.
-    """
-    VIEW = (640, 360)
-    LOOP_SECONDS = 4.0                  # un bucle infinito (panic...) se enseña durante estos segundos
-    SPEEDS = {"0.25×": 0.25, "0.5×": 0.5, "1×": 1.0, "2×": 2.0}
-
-    def __init__(self, master, engine, get_tag, get_attrs, get_expr, count: int, slot: int, bg: str = ""):
-        super().__init__(master)
-        self.title("Previsualizar animación")
-        self.transient(master)
-        self.resizable(False, False)
-        self.eng, self.get_tag, self.get_attrs, self.get_expr = engine, get_tag, get_attrs, get_expr
-        self.count, self.slot, self.bg = max(count, 1), max(slot, 1), bg
-        self._job = None
-        self._t0 = 0.0
-        self._photo = None
-        self._setting = False
-        self._span = 0.0
-        self.event = tk.StringVar(value="show")
-        self.loop = tk.BooleanVar(value=False)
-        self.speed = tk.StringVar(value="1×")
-        self.src = tk.StringVar(value=str(self.slot % self.count + 1 if self.count > 1 else 1))
-        top = ttk.Frame(self, padding=(8, 6))
-        top.pack(fill="x")
-        for val, txt in (("show", "Entrada"), ("replace", "Cambio de celda"), ("hide", "Salida")):
-            ttk.Radiobutton(top, text=txt, value=val, variable=self.event,
-                            command=self.play).pack(side="left", padx=4)
-        ttk.Label(top, text="  desde la celda").pack(side="left")
-        ttk.Combobox(top, textvariable=self.src, values=[str(i) for i in range(1, self.count + 1)],
-                     state="readonly", width=3).pack(side="left", padx=4)
-        self.src.trace_add("write", lambda *_: self.play())
-        self.canvas = tk.Canvas(self, width=self.VIEW[0], height=self.VIEW[1], bg="black", highlightthickness=0)
-        self.canvas.pack(padx=8)
-        bar = ttk.Frame(self, padding=(8, 6))
-        bar.pack(fill="x")
-        ttk.Button(bar, text="▶ Reproducir", command=self.play).pack(side="left")
-        ttk.Button(bar, text="■ Parar", command=self.stop).pack(side="left", padx=4)
-        ttk.Checkbutton(bar, text="Bucle", variable=self.loop, command=self.play).pack(side="left", padx=6)
-        ttk.Label(bar, text="Velocidad").pack(side="left", padx=(8, 2))
-        cb = ttk.Combobox(bar, textvariable=self.speed, values=list(self.SPEEDS), state="readonly", width=6)
-        cb.pack(side="left")
-        self.clock = ttk.Label(bar, text="")
-        self.clock.pack(side="right")
-        self.scale = ttk.Scale(self, from_=0.0, to=1.0, orient="horizontal", command=self._on_scale)
-        self.scale.pack(fill="x", padx=8)
-        self.info = ttk.Label(self, text="", wraplength=620, justify="left", foreground="#a05000")
-        self.info.pack(fill="x", padx=8, pady=(4, 8))
-        self.bind("<space>", lambda e: self.play())
-        self.bind("<Escape>", lambda e: self.close())
-        self.protocol("WM_DELETE_WINDOW", self.close)
-        self.refresh()
-
-    # ------------------------------------------------------------------ datos
-    def _expr(self) -> str:
-        return (self.get_expr() or "").strip()
-
-    def _start_expr(self) -> str:
-        return f"t{self.count}{self.src.get()}" if self.count else "t11"
-
-    def _event(self) -> str:
-        return self.event.get()
-
-    def _duration(self) -> float:
-        lib = self.eng.lib
-        ev = self._event()
-        dur = lib.duration_expr(self._expr(), ev)
-        if lib.loops_expr(self._expr(), ev):
-            return self.LOOP_SECONDS
-        return dur
-
-    # ------------------------------------------------------------------ reproducción
-    def refresh(self) -> None:
-        """Tras cambiar el texto del transform / la pose: vuelve a empezar."""
-        self.play()
-
-    def stop(self) -> None:
-        if self._job is not None:
-            self.after_cancel(self._job)
-            self._job = None
-
-    def close(self) -> None:
-        self.stop()
-        self.destroy()
-
-    def play(self) -> None:
-        self.stop()
-        try:
-            cells.parse_transform_list(self._expr())
-        except ValueError as exc:
-            self.info.config(text=str(exc))
-            return
-        self._span = self._duration()
-        self._setting = True
-        try:
-            self.scale.config(to=max(self._span, 0.01))
-            self.scale.set(0.0)
-        finally:
-            self._setting = False
-        self._t0 = time.monotonic()
-        self._tick()
-
-    def _speed(self) -> float:
-        return self.SPEEDS.get(self.speed.get(), 1.0)
-
-    def _tick(self) -> None:
-        el = (time.monotonic() - self._t0) * self._speed()
-        if el >= self._span:
-            self._draw(None if self._span <= 0 or self._event() != "hide" else self._span)
-            self._set_scale(self._span)
-            self._job = self.after(600, self.play) if self.loop.get() else None
-            return
-        self._draw(el)
-        self._set_scale(el)
-        self._job = self.after(30, self._tick)
-
-    def _set_scale(self, t: float) -> None:
-        self._setting = True
-        try:
-            self.scale.set(t)
-        finally:
-            self._setting = False
-        self.clock.config(text=f"{t:0.2f} / {self._span:0.2f} s")
-
-    def _on_scale(self, value) -> None:
-        if self._setting:
-            return
-        self.stop()                                   # arrastrar la barra = ir a ese instante
-        t = float(value)
-        self._draw(t)
-        self.clock.config(text=f"{t:0.2f} / {self._span:0.2f} s")
-
-    def _draw(self, t) -> None:
-        expr = self._expr()
-        try:
-            img = self.eng.sprite_frame(self.get_tag(), self.get_attrs() or (), expr, self._event(), t,
-                                        self._start_expr(), self.bg, quick=True)
-            res = getattr(Image, "Resampling", Image)
-            self._photo = ImageTk.PhotoImage(img.resize(self.VIEW, res.BILINEAR))
-            self.canvas.delete("all")
-            self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
-        except Exception as exc:                      # no tumbar la ventana por un sprite que falte
-            self.info.config(text=f"No se pudo dibujar: {exc}")
-            return
-        notes = list(self.eng.warnings)
-        unknown = self.eng.lib.unknown_in(expr)
-        if unknown:
-            notes.append("No está en tu transforms.rpy: " + ", ".join(unknown) + " (no se anima).")
-        if self._span <= 0:
-            notes.append("Este transform no tiene animación en este evento (aparece ya en su sitio).")
-        elif self.eng.lib.loops_expr(expr, self._event()):
-            notes.append(f"Bucle infinito: se enseñan {self.LOOP_SECONDS:g} s.")
-        self.info.config(text="  ·  ".join(notes))
 
 
 def run(db, game_dir: str) -> None:
