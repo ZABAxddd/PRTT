@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_FILES = ("PRTT.bat", "PRTT.sh", "README.md")
+SOURCE_FILES = ("PRTT.bat", "PRTT.sh", "README.md", "logo.ico")
 
 
 def _archive_directory(source: Path, destination: Path) -> None:

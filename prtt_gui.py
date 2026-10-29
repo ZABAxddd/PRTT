@@ -237,19 +237,21 @@ class DialogueBrowser(tk.Tk):
         self._modal = 0                    # >0 mientras hay un diálogo modal abierto
         self._pv_cells_on = tk.BooleanVar(value=True)           # mostrar / ocultar las celdas
         self._autosave = tk.BooleanVar(value=AUTOSAVE_DEFAULT)
+        
         self._title_base = _t("PRTT - Lector de diálogos  |  {0}", game_dir)
         self.title(self._title_base)
         
-        # <-- Agrega esta línea para cambiar el logo de la ventana -->
+        # Carga segura del icono usando la ruta absoluta del directorio de la herramienta
         try:
-            self.iconbitmap(os.path.join(TOOL_DIR, "logo.ico"))
+            icon_path = os.path.join(TOOL_DIR, "logo.ico")
+            if os.path.exists(icon_path):
+                self.iconbitmap(icon_path)
         except Exception:
             pass
             
         width, height = 1500, 760
         self.geometry(f"{width}x{height}")
-        width, height = 1500, 760
-        self.geometry(f"{width}x{height}")
+
         width, height = fit_window(
             self, width, height, min_size=(min(760, width), min(440, height)),
             margin=(10, 30),
