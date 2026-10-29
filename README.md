@@ -6,6 +6,19 @@ Selecciona un diálogo, abre la vista previa y trabaja directamente con las celd
 
 > PRTT es una aplicación independiente; no se instala dentro del juego como un mod activable desde el menú de DDLC. Se coloca junto a los scripts del mod para leerlos y guardar los cambios.
 
+## Novedades y mejoras principales
+
+Esta versión amplía la utilidad de PRTT más allá del ajuste visual básico de sprites y añade una capa más profesional de análisis del contexto del mod:
+
+- Previews mejoradas: la vista previa de diálogos ahora interpreta mejor los fondos, transiciones y cambios de escena, y mantiene el estado visual del diálogo actual para que puedas comprobar cada composición en contexto antes de guardar.
+- Selector de escenarios y transiciones: PRTT puede leer el fondo vigente, la transición asociada y la secuencia de visuales para ayudarte a comparar estados previos y actuales, mostrando previsualizaciones más claras de cambio de fondo y efectos de transición.
+- Colocación de personajes y transforms: la edición de celdas, el ajuste de capas y el uso de transforms con `on hide` se hace más consistente y fiable al reconocer animaciones y salida de personajes dentro del mismo flujo del diálogo.
+- Vista previa de música en el script: la pestaña de preview puede escuchar la `play music` o `stop music` aplicable al diálogo seleccionado, con manejo de bucles, fades y sincronización textual con el archivo `.rpy`.
+- Escritura de música en script: PRTT detecta definiciones de audio, comentarios de título, rutas sueltas y líneas `play music`/`stop music` para escribir la edición correcta sin depender de un contexto de Ren'Py completo.
+- Empaquetado portable: se añadió la posibilidad de distribuir PRTT como ZIP portable con Python y dependencias embebidas, para que el usuario final no tenga que instalar Python ni bibliotecas manualmente.
+
+La intención es que la herramienta funcione como un editor visual de escenas y audio para mods de DDLC, con una previsualización cercana a lo que se ejecutará en el juego, pero sin ejecutar el intérprete del juego ni depender de un entorno de desarrollo.
+
 ## Contenido
 
 - [Qué puedes hacer](#qué-puedes-hacer)
