@@ -62,7 +62,7 @@ def build(target: str) -> Path:
             sys.executable, "-m", "PyInstaller",
             "--noconfirm", "--clean", "--onedir", "--windowed",
             "--name", "PRTT",
-            "--icon", str(ROOT / "logo.ico"),  # <--- AQUÍ SE AGREGA EL ICONO PARA EL EXE
+            "--icon", str(ROOT / "logo.ico"),  # Icono para el ejecutable .exe
             "--distpath", str(pyinstaller_dist),
             "--workpath", str(temp / "work"),
             "--specpath", str(temp / "spec"),
@@ -84,11 +84,19 @@ def build(target: str) -> Path:
             shutil.copytree(app_bundle, portable_dir / "PRTT.app", symlinks=True)
         else:
             shutil.copytree(executable_bundle, portable_dir, dirs_exist_ok=True, symlinks=True)
+            
         for source_name in SOURCE_FILES:
             shutil.copy2(ROOT / source_name, portable_dir / source_name)
+            
         for source in ROOT.glob("*.py"):
             shutil.copy2(source, portable_dir / source.name)
+            
         shutil.copy2(ROOT / "requirements-runtime.txt", portable_dir / "requirements-runtime.txt")
+
+        # Copiar la carpeta lang para los idiomas portables
+        lang_src = ROOT / "lang"
+        if lang_src.is_dir():
+            shutil.copytree(lang_src, portable_dir / "lang", dirs_exist_ok=True)
 
         unix_launcher = portable_dir / "PRTT.sh"
         if unix_launcher.exists():
