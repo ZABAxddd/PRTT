@@ -9,6 +9,9 @@ Abajo:     el texto completo de la línea seleccionada.
 """
 import json
 import os
+import shlex
+import shutil
+import subprocess
 import sys
 import time
 from typing import Optional
@@ -201,6 +204,7 @@ class DialogueBrowser(tk.Tk):
         self.info = ttk.Label(top, text="")
         self.info.pack(side="right")
         ttk.Button(top, text="✎ Editar diálogo (F2)", command=self._edit_dialogues).pack(side="left", padx=(12, 0))
+        ttk.Button(top, text="📍 Ir a línea", command=self._open_selected_dialogue_in_editor).pack(side="left", padx=(6, 0))
         ttk.Button(top, text="🎬 Escenarios…", command=self._open_scenes).pack(side="left", padx=(6, 0))
 
         panes = ttk.PanedWindow(page, orient="horizontal")
@@ -219,7 +223,7 @@ class DialogueBrowser(tk.Tk):
         cols = ("n", "label", "who", "text", "where")
         self.rows = ttk.Treeview(right, columns=cols, show="headings", selectmode="extended")
         for col, title, width in (("n", "#", 45), ("label", "Label", 130), ("who", "Personaje", 110),
-                                  ("text", "Texto", 520), ("where", "Archivo:línea", 150)):
+                                  ("text", "Texto", 520), ("where", "Código · archivo:línea", 170)):
             self.rows.heading(col, text=title)
             self.rows.column(col, width=width, minwidth=40, anchor="w", stretch=(col == "text"))
         sb2 = ttk.Scrollbar(right, orient="vertical", command=self.rows.yview)
@@ -248,12 +252,90 @@ class DialogueBrowser(tk.Tk):
         self.detail = tk.Text(page, height=5, wrap="word", state="disabled")
         self.detail.pack(fill="x", padx=8, pady=(6, 8))
 
+    def _dialogue_path(self, file_name: str) -> Optional[str]:
+        if not file_name:
+            return None
+        p = os.path.normpath(file_name)
+        if os.path.isabs(p):
+            return p if os.path.exists(p) else None
+        for base in (self.game_dir, os.getcwd(), os.path.dirname(os.path.abspath(__file__))):
+            cand = os.path.normpath(os.path.join(base, p))
+            if os.path.exists(cand):
+                return cand
+        return os.path.normpath(os.path.join(self.game_dir, p))
+
+    def _editor_command(self, path: str, line: int):
+        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or os.environ.get("GIT_EDITOR")
+        if editor:
+            parts = shlex.split(editor, posix=os.name != "nt")
+            if parts:
+                exe = os.path.basename(parts[0]).lower()
+                if "code" in exe or "codium" in exe:
+                    return parts + ["--goto", f"{path}:{line}"]
+                if "notepad++" in exe:
+                    return parts + [f"-n{line}", path]
+                if "subl" in exe or "sublime" in exe:
+                    return parts + [f"{path}:{line}"]
+                return parts + [path]
+        for name, args in (
+            ("code", ["--goto", f"{path}:{line}"]),
+            ("code-insiders", ["--goto", f"{path}:{line}"]),
+            ("codium", ["--goto", f"{path}:{line}"]),
+            ("notepad++.exe", [f"-n{line}", path]),
+            ("notepad++", [f"-n{line}", path]),
+            ("subl", [f"{path}:{line}"]),
+            ("sublime_text", [f"{path}:{line}"]),
+            ("cursor", ["--goto", f"{path}:{line}"]),
+        ):
+            exe = shutil.which(name) or (shutil.which(name + ".exe") if os.name == "nt" else None)
+            if exe:
+                return [exe] + args
+        return None
+
+    def _open_dialogue_in_editor(self, dl: Optional[DialogueLine]) -> None:
+        if dl is None:
+            return
+        path = self._dialogue_path(dl.file)
+        if not path or not os.path.exists(path):
+            messagebox.showerror("Ir a línea", f"No encontré el archivo del diálogo:\n{dl.file}", parent=self)
+            return
+        cmd = self._editor_command(path, dl.line)
+        if cmd is None:
+            try:
+                os.startfile(path)
+            except (AttributeError, OSError):
+                try:
+                    subprocess.Popen(["notepad.exe", path])
+                except OSError:
+                    messagebox.showerror("Ir a línea", f"No pude abrir el archivo:\n{path}", parent=self)
+            return
+        try:
+            subprocess.Popen(cmd)
+        except OSError as exc:
+            messagebox.showerror("Ir a línea", f"No pude abrir el editor preferido:\n{exc}", parent=self)
+
+    def _open_selected_dialogue_in_editor(self) -> None:
+        dls = sorted((self._rows[i] for i in self.rows.selection() if i in self._rows), key=lambda d: (d.file, d.line))
+        if not dls:
+            messagebox.showinfo("Ir a línea", "Elige primero un diálogo en la lista.", parent=self)
+            return
+        self._open_dialogue_in_editor(dls[0])
+
+    def _open_current_dialogue_in_editor(self) -> None:
+        frame = self._pv_frame()
+        dl = self._dl_for_frame(frame) if frame is not None else None
+        if dl is None:
+            messagebox.showinfo("Ir a línea", "Elige primero un diálogo en la pestaña «Diálogos».", parent=self)
+            return
+        self._open_dialogue_in_editor(dl)
+
     # ------------------------------------------------------------------ pestaña Preview
     def _build_preview(self, page) -> None:
         bar = ttk.Frame(page, padding=(8, 6))
         bar.pack(fill="x")
         ttk.Button(bar, text="◀ Anterior", command=lambda: self._pv_step(-1)).pack(side="left")
         ttk.Button(bar, text="Siguiente ▶", command=lambda: self._pv_step(1)).pack(side="left", padx=4)
+        ttk.Button(bar, text="📍 Ir a línea", command=self._open_current_dialogue_in_editor).pack(side="left", padx=(8, 0))
         self._pv_anim = tk.BooleanVar(value=True)
         ttk.Checkbutton(bar, text="Animar", variable=self._pv_anim).pack(side="left", padx=8)
         ttk.Button(bar, text="Guardar PNG", command=self._pv_save).pack(side="left")
@@ -1108,7 +1190,7 @@ class DialogueBrowser(tk.Tk):
         if sel and sel[0] in self._rows:
             dl: DialogueLine = self._rows[sel[0]]
             pose = f"   pose: {' '.join(dl.attrs)}" if dl.attrs else ""
-            self._set_detail(f"{dl.speaker}{pose}   ({dl.where})\n\n{dl.text}")
+            self._set_detail(f"{dl.speaker}{pose}   ·   código: {dl.where}\n\n{dl.text}")
             self._render_poses(dl)
             self._pv_set(dl)
 
@@ -1290,7 +1372,8 @@ class DialogueBrowser(tk.Tk):
             text = text[:87] + "…"
         name = d.get("who_name") or who or "(narrador)"
         temp = " (temporal)" if who and who != "extend" and who not in self.db.characters else ""
-        self._tb_info.config(text=f"{name}{temp}{pose}:  {text}")
+        line = f" · código: {frame.event.file}:{frame.event.line}" if frame is not None else ""
+        self._tb_info.config(text=f"{name}{temp}{pose}:  {text}{line}")
 
     def _tb_quick_speaker(self) -> None:
         """Cambia el hablante de la línea elegida desde el desplegable del Textbox."""
