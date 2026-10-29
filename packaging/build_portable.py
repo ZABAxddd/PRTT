@@ -62,6 +62,7 @@ def build(target: str) -> Path:
             sys.executable, "-m", "PyInstaller",
             "--noconfirm", "--clean", "--onedir", "--windowed",
             "--name", "PRTT",
+            "--icon", str(ROOT / "logo.ico"),  # <--- AQUÍ SE AGREGA EL ICONO PARA EL EXE
             "--distpath", str(pyinstaller_dist),
             "--workpath", str(temp / "work"),
             "--specpath", str(temp / "spec"),

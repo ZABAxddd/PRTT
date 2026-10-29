@@ -239,6 +239,15 @@ class DialogueBrowser(tk.Tk):
         self._autosave = tk.BooleanVar(value=AUTOSAVE_DEFAULT)
         self._title_base = _t("PRTT - Lector de diálogos  |  {0}", game_dir)
         self.title(self._title_base)
+        
+        # <-- Agrega esta línea para cambiar el logo de la ventana -->
+        try:
+            self.iconbitmap(os.path.join(TOOL_DIR, "logo.ico"))
+        except Exception:
+            pass
+            
+        width, height = 1500, 760
+        self.geometry(f"{width}x{height}")
         width, height = 1500, 760
         self.geometry(f"{width}x{height}")
         width, height = fit_window(
