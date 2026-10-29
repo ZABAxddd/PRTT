@@ -41,6 +41,7 @@ Los cambios de colocación se reflejan en la vista previa al instante. PRTT usa 
 
 - Navega por archivos, `label` y líneas de diálogo; también puedes buscar texto y editar diálogos.
 - Consulta el fondo y la transición que acompañan al diálogo. El selector de escenarios ofrece galerías y previsualizaciones para trabajar con fondos y transiciones disponibles en los scripts.
+- En las previews de transición, al mantener seleccionado el fondo actual se muestra el fondo anterior hacia el actual; si no hay fondo anterior, se usa gris. Al seleccionar otro fondo, se previsualiza la transición desde el fondo actual hacia el nuevo.
 - Guarda una captura de la vista previa como PNG.
 - Usa deshacer y rehacer, y activa el auto-guardado para las ediciones compatibles.
 

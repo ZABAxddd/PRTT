@@ -239,9 +239,10 @@ class SceneBrowser(tk.Toplevel):
         self.lbl_tr = ttk.Label(details, foreground="#555555", wraplength=380, justify="left")
         self.lbl_tr.pack(anchor="w", pady=(4, 6))
         self.lbl_tr_help = ttk.Label(details, foreground="#777777", wraplength=380, justify="left", text=(
-            "La vista previa usa el fondo elegido en la pestaña «Fondos». Las flechas recorren las transiciones "
-            "estándar de Ren'Py y las definidas o usadas por el mod. La transición elegida se usa al pulsar "
-            "Reemplazar o Agregar."
+            "Al elegir el fondo actual, la vista previa muestra el fondo anterior y el actual; si no existe uno "
+            "anterior, usa gris. Al elegir otro fondo, muestra el actual y el nuevo. Las flechas recorren las "
+            "transiciones estándar de Ren'Py y las definidas o usadas por el mod. La transición elegida se usa "
+            "al pulsar Reemplazar o Agregar."
         ))
         self.lbl_tr_help.pack(anchor="w", pady=(6, 0))
 
@@ -573,14 +574,25 @@ class SceneBrowser(tk.Toplevel):
     def _sync_tr(self) -> None:
         """Pone al día los rótulos de las dos pestañas y reproduce SOLO si «Transiciones» está a la vista."""
         self.lbl_tr_sum.config(text=self._tr_summary())
-        bg = self.model.current
-        old = self.ctx.current_bg or "(sin fondo anterior)"
-        self.lbl_route.config(text=f"Vista previa: {old}   →   {bg.name}"
-                              if bg else f"Vista previa: {old}   →   (ningún fondo coincide con el filtro)")
+        old_bg, new_bg = self._transition_pair()
+        old = old_bg.name
+        self.lbl_route.config(text=f"Vista previa: {old}   →   {new_bg.name}"
+                              if new_bg else f"Vista previa: {old}   →   (ningún fondo coincide con el filtro)")
         if self._tr_visible():
             self._play()
         else:
             self._stop()
+
+    def _transition_pair(self):
+        """El fondo elegido como actual previsualiza la escena previa; otro fondo es el nuevo destino."""
+        selected = self.model.current
+        gray = scenes.Background("gris de referencia", "color", color="#808080")
+        if selected is not None and self.ctx.current is not None \
+                and selected.name == self.ctx.current_bg:
+            old = self._bg_for(self.ctx.previous_bg) if self.ctx.previous else gray
+            return old, self._bg_for(self.ctx.current_bg)
+        old = self._bg_for(self.ctx.current_bg) if self.ctx.current else gray
+        return old, selected
 
     def _on_tab(self) -> None:
         self._sync_tr()
@@ -607,7 +619,9 @@ class SceneBrowser(tk.Toplevel):
     def _render_transition_gallery(self) -> None:
         if not HAVE_TKIMG or self._old is None or self._new is None:
             return
-        pair = (self.ctx.current_bg, self.model.current.name if self.model.current else None)
+        old_bg, new_bg = self._transition_pair()
+        pair = (old_bg.name, old_bg.color, new_bg.name if new_bg else None,
+                new_bg.color if new_bg else None)
         pair_changed = pair != self._transition_gallery_pair
         hovered_key = self._transition_gallery_hover_key
         if pair_changed:
@@ -811,12 +825,16 @@ class SceneBrowser(tk.Toplevel):
         self.lbl_tr.config(text=info)
         self.lbl_tr_sum.config(text=self._tr_summary())
         self._show_transition_choice()
-        if not HAVE_TKIMG or new_bg is None:
+        if not HAVE_TKIMG:
+            self.cv_tr.delete("all")
+            return
+        if new_bg is None:
             self.cv_tr.delete("all")
             return
         preview_size = self._preview_size_for_canvas()
         self._preview_size = preview_size
-        self._old = self._image(self._bg_for(self.ctx.current_bg), preview_size).convert("RGBA")
+        old_bg, new_bg = self._transition_pair()
+        self._old = self._image(old_bg, preview_size).convert("RGBA")
         self._new = self._image(new_bg, preview_size).convert("RGBA")
         self._render_transition_gallery()
         self._spec_now = spec
