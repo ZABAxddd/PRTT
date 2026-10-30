@@ -210,6 +210,9 @@ class ScriptDB:
         self.styles: Dict[str, dict] = {}     # style say_dialogue: -> {"parent": .., "bodies": [..]}
         self.files: List[str] = []
         self.errors: List[str] = []
+        self.sources: Dict[str, str] = {}     # archivo -> texto, solo de los scripts descompilados de un .rpyc
+        self.readonly: set = set()            # archivos leídos de un .rpyc: PRTT no puede escribir en ellos
+        self.compiled_from: Dict[str, str] = {}   # archivo -> ruta del .rpyc (o rpa://...) de donde salió
         self._capture: Optional[list] = None  # donde guardar el cuerpo del bloque en curso
 
     # ------------------------------------------------------------------ carga
@@ -224,6 +227,7 @@ class ScriptDB:
             raise FileNotFoundError(_t("No existe la carpeta: {0}", game_dir))
         skip = {os.path.normcase(os.path.abspath(p)) for p in exclude_dirs}
         paths: List[str] = []
+        rpyc_paths: List[str] = []
         for root, dirs, files in os.walk(game_dir):
             dirs[:] = sorted(
                 d for d in dirs
@@ -233,6 +237,8 @@ class ScriptDB:
             for fn in sorted(files):
                 if fn.lower().endswith(".rpy"):
                     paths.append(os.path.join(root, fn))
+                elif fn.lower().endswith(".rpyc"):
+                    rpyc_paths.append(os.path.join(root, fn))
         # definiciones (define/image) pueden estar en cualquier archivo: se leen todos igual
         for p in paths:
             rel = os.path.relpath(p, game_dir).replace(os.sep, "/")
@@ -243,8 +249,50 @@ class ScriptDB:
                 self.files.append(rel)
             except OSError as exc:
                 self.errors.append(f"{rel}: {exc}")
+        self._load_compiled(game_dir, rpyc_paths)
         self._index_labels()
         return self
+
+    def _load_compiled(self, game_dir: str, rpyc_paths: List[str]) -> None:
+        """Scripts que solo existen compilados (.rpyc suelto o dentro de un .rpa): se descompilan a texto y se leen
+        como si fueran el .rpy (con sus líneas originales). Quedan en self.readonly. Un .rpy suelto gana siempre."""
+        have = set(self.files)
+        found: Dict[str, str] = {}                                   # "script-ch1.rpy" -> de dónde sale el .rpyc
+        for p in rpyc_paths:
+            rel = os.path.relpath(p, game_dir).replace(os.sep, "/")[:-1]
+            if rel not in have:
+                found[rel] = p
+        try:
+            import rpa_reader
+        except ImportError:                                          # el lector de .rpa es opcional
+            rpa_reader = None
+        if rpa_reader is not None:
+            for name in rpa_reader.get_vault(game_dir).names():
+                rel = name[:-1]
+                if name.lower().endswith(".rpyc") and rel not in have and rel not in found:
+                    found[rel] = rpa_reader.RPA_PREFIX + name
+        if not found:
+            return
+        import rpyc_decompile
+        import rpyc_reader
+        for rel in sorted(found):
+            origin = found[rel]
+            try:
+                if rpa_reader is not None and rpa_reader.is_virtual(origin):
+                    data = rpa_reader.read_asset(origin)
+                else:
+                    with open(origin, "rb") as f:
+                        data = f.read()
+                result = rpyc_decompile.decompile(rpyc_reader.load_rpyc(data).stmts)
+            except Exception as exc:                                 # un .rpyc raro no debe impedir leer el resto
+                self.errors.append(_t("{0}: no se pudo leer el script compilado ({1})", rel + "c", exc))
+                continue
+            self.parse_text(result.text, rel)
+            self.files.append(rel)
+            self.sources[rel] = result.text
+            self.readonly.add(rel)
+            self.compiled_from[rel] = origin
+            self.errors.extend(f"{rel}: {w}" for w in result.warnings)
 
     def _index_labels(self) -> None:
         self.labels = {}

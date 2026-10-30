@@ -165,11 +165,15 @@ def collect_tracks(db: ScriptDB, game_dir: str) -> List[Track]:
     tracks: List[Track] = []
     seen: set = set()
     for rel in db.files:
-        try:
-            with open(os.path.join(game_dir, *rel.split("/")), "r", encoding="utf-8-sig", errors="replace") as f:
-                lines = f.read().splitlines()
-        except OSError:
-            continue
+        text = getattr(db, "sources", {}).get(rel)                    # script leído de un .rpyc: ya está en memoria
+        if text is not None:
+            lines = text.splitlines()
+        else:
+            try:
+                with open(os.path.join(game_dir, *rel.split("/")), "r", encoding="utf-8-sig", errors="replace") as f:
+                    lines = f.read().splitlines()
+            except OSError:
+                continue
         for i, phys in enumerate(lines):
             code, comment = _split_comment(phys)
             m = _DEFINE.match(code)

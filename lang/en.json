@@ -173,7 +173,6 @@
   "poses y expresiones leídas de definitions.rpy (opcional: solo un personaje)": "poses and expressions read from definitions.rpy (optional: only one character)",
   "listar las pistas de música (comentario # Título o variable)": "list the music tracks (# Title comment or variable)",
   "mostrar qué ajustes de la caja de texto se leyeron de tus .rpy": "show which textbox settings were read from your .rpy files",
-  "No encontré ningún archivo .rpy en: {0}\n· PRTT debe estar dentro de /game  (por ejemplo /game/PRTT).\n· Si los scripts del juego siguen dentro de scripts.rpa, hay que extraerlos primero:\n  PRTT solo lee archivos .rpy.": "No .rpy file found in: {0}\n· PRTT must be inside /game  (for example /game/PRTT).\n· If the game scripts are still inside scripts.rpa, they must be extracted first:\n  PRTT only reads .rpy files.",
   "{0} resultados": "{0} results",
   "No se encontró ese archivo/label con diálogo.": "That file/label with dialogue was not found.",
   "Tkinter no está disponible en este Python; muestro el resumen en consola.\n(En Windows, reinstala Python marcando 'tcl/tk and IDLE'.)\n": "Tkinter is not available in this Python; showing the summary in the console.\n(On Windows, reinstall Python checking 'tcl/tk and IDLE'.)\n",
@@ -488,6 +487,19 @@
   "{0}: {1} está truncado": "{0}: {1} is truncated",
   "no está en ningún .rpa: {0}": "not found in any .rpa: {0}",
   "nombre no permitido dentro del .rpa: {0}": "name not allowed inside the .rpa: {0}",
-  "no hay ningún .rpa abierto": "no .rpa is open"
+  "no hay ningún .rpa abierto": "no .rpa is open",
+  "No encontré ningún script (.rpy ni .rpyc) en: {0}\n· PRTT debe estar dentro de /game  (por ejemplo /game/PRTT).\n· Los scripts pueden estar sueltos o dentro de un .rpa: PRTT lee los .rpy y, si no los hay, los .rpyc (solo lectura).": "No scripts (.rpy or .rpyc) found in: {0}\n· PRTT must be inside /game  (for example /game/PRTT).\n· Scripts can be loose or inside an .rpa: PRTT reads the .rpy files and, if there are none, the .rpyc files (read-only).",
+  "Scripts leídos de .rpyc (solo lectura): {0}": "Scripts read from .rpyc (read-only): {0}",
+  "{0}: no se pudo leer el script compilado ({1})": "{0}: could not read the compiled script ({1})",
+  "«{0}» viene de un .rpyc compilado: PRTT puede leerlo y previsualizarlo, pero no escribir en él.": "“{0}” comes from a compiled .rpyc: PRTT can read and preview it, but it cannot write to it.",
+  "instrucción no soportada «{0}» (línea {1}): se omite": "unsupported statement “{0}” (line {1}): skipped",
+  "el .rpyc contiene un objeto no permitido: {0}.{1}": "the .rpyc contains a disallowed object: {0}.{1}",
+  "no se pudo descomprimir el .rpyc: {0}": "could not decompress the .rpyc: {0}",
+  "el .rpyc es demasiado grande": "the .rpyc is too large",
+  "tabla de ranuras del .rpyc incompleta": "the .rpyc slot table is incomplete",
+  "el .rpyc no tiene la ranura 1": "the .rpyc has no slot 1",
+  "el .rpyc está truncado": "the .rpyc is truncated",
+  "no se pudo leer el contenido del .rpyc: {0}": "could not read the .rpyc contents: {0}",
+  "el .rpyc no tiene la estructura esperada": "the .rpyc does not have the expected structure"
  }
 }

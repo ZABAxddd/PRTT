@@ -762,6 +762,17 @@ class DialogueBrowser(tk.Tk):
         if not quick:                      # durante la animación no se dibujan las celdas
             self._pv_draw_cells()
 
+    # ------------------------------------------------------------------ scripts de solo lectura (leídos de un .rpyc)
+    def _readonly_files(self):
+        return getattr(self.db, "readonly", ())
+
+    def _is_readonly_frame(self, frame) -> bool:
+        return frame is not None and frame.event.file in self._readonly_files()
+
+    @staticmethod
+    def _readonly_msg(file: str) -> str:
+        return _t("«{0}» viene de un .rpyc compilado: PRTT puede leerlo y previsualizarlo, pero no escribir en él.", file)
+
     # ------------------------------------------------------------------ celdas de personajes
     def _pv_frame(self) -> Optional[Frame]:
         return self._pv_frames[self._pv_i] if 0 <= self._pv_i < len(self._pv_frames) else None
@@ -778,7 +789,10 @@ class DialogueBrowser(tk.Tk):
         if lay is None:
             lay = cells.layout_from_stage(frame.stage)
             if create:
-                self._pv_edits[key] = lay
+                if self._is_readonly_frame(frame):
+                    self._pv_status.config(text=self._readonly_msg(frame.event.file))
+                else:
+                    self._pv_edits[key] = lay
         return lay
 
     def _pv_eff(self, frame):
@@ -1212,6 +1226,8 @@ class DialogueBrowser(tk.Tk):
         frame = self._scene_frame()
         if frame is None:
             return False, _t("No encuentro el diálogo: pulsa «Recargar .rpy».")
+        if self._is_readonly_frame(frame):
+            return False, self._readonly_msg(frame.event.file)
         ok, msg, full = self._scene_controller.apply(self.db, frame, op, bg, effect, reshow, self._mtimes)
         if ok:
             self._scene_reloaded(full)
@@ -1265,6 +1281,8 @@ class DialogueBrowser(tk.Tk):
         frame = self._audio_frame()
         if frame is None:
             return False, _t("No encuentro el diálogo: pulsa «Recargar .rpy».")
+        if self._is_readonly_frame(frame):
+            return False, self._readonly_msg(frame.event.file)
         ok, msg = self._audio_controller.apply(self.db, frame, op, track, opts, self._mtimes)
         if ok:
             self._audio_reloaded()
@@ -1430,6 +1448,8 @@ class DialogueBrowser(tk.Tk):
             if not 0 <= idx < len(frames):
                 errors.append(_t("{0} #{1}: no encuentro ese diálogo en los scripts.", label, idx + 1))
                 continue
+            if self._is_readonly_frame(frames[idx]):
+                continue                                  # defensa: nunca se escribe en un script de solo lectura
             # make_change recoge la ventana de instrucciones del diálogo (para reemplazar sus show/hide
             # en su sitio) y quiénes ya estaban en escena antes (para decidir hide o borrar)
             changes.append(rpy_writer.make_change(key, frames[idx], lay, frames[idx - 1] if idx else None, self.db))
@@ -1851,6 +1871,10 @@ class DialogueBrowser(tk.Tk):
         if not edits:
             self._pv_status.config(text=_t("Diálogo sin cambios."))
             return True
+        ro = [dl for dl in dls if dl.file in self._readonly_files()]
+        if ro:
+            messagebox.showerror(_t("Guardar en los .rpy"), self._readonly_msg(ro[0].file), parent=self)
+            return False
         results = self.writer.apply_dialogues(edits, self._mtimes)
         errors = [r.msg for r in results if not r.ok]
         if any(r.ok for r in results):

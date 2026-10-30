@@ -58,6 +58,8 @@ def cli_summary(db: rpy_parser.ScriptDB, index: ScriptIndex) -> None:
         print(_t("\n{0}  ({1} líneas)", file, sum(len(i.lines) for i in infos)))
         for info in infos:
             print(_t("   {0:<32} {1:>5} líneas  (línea {2})", info.name, len(info.lines), info.line))
+    if db.readonly:
+        print(_t("Scripts leídos de .rpyc (solo lectura): {0}", len(db.readonly)))
     if db.errors:
         print(_t("\nAvisos al leer ({0}):", len(db.errors)))
         for e in db.errors[:20]:
@@ -123,6 +125,7 @@ def cli_catalog(db: rpy_parser.ScriptDB, game_dir: str, tag: str = "") -> int:
 def cli_music(db: rpy_parser.ScriptDB, game_dir: str) -> int:
     """Pistas de música de los .rpy: nombre (comentario o variable), archivo, duración y dónde se usan."""
     import audio
+    import rpa_reader
     tracks = audio.collect_tracks(db, game_dir)
     if not tracks:
         print(_t("No encontré pistas: define algo como  define audio.t1 = \"bgm/1.ogg\"  # Título"), file=sys.stderr)
@@ -141,7 +144,7 @@ def cli_music(db: rpy_parser.ScriptDB, game_dir: str) -> int:
     for t in tracks:
         audio.load_info(t)
         dur = audio.fmt_time(t.duration) if t.duration else "—"
-        file = os.path.relpath(t.file, game_dir) if t.file else _t("NO ENCONTRADO")
+        file = (t.file if rpa_reader.is_virtual(t.file) else os.path.relpath(t.file, game_dir)) if t.file else _t("NO ENCONTRADO")
         flag = _t("  (sin definir)") if t.kind == "missing" else ""
         loop = f"  loop {t.loop}" if t.loop is not None else ""
         print(f"{t.name:<36} {t.short:<10} {dur:>7}  {file}{loop}{flag}")
@@ -202,7 +205,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 1
 
     if not db.files:
-        print(_t("No encontré ningún archivo .rpy en: {0}\n· PRTT debe estar dentro de /game  (por ejemplo /game/PRTT).\n· Si los scripts del juego siguen dentro de scripts.rpa, hay que extraerlos primero:\n  PRTT solo lee archivos .rpy.", game_dir), file=sys.stderr)
+        print(_t("No encontré ningún script (.rpy ni .rpyc) en: {0}\n· PRTT debe estar dentro de /game  (por ejemplo /game/PRTT).\n· Los scripts pueden estar sueltos o dentro de un .rpa: PRTT lee los .rpy y, si no los hay, los .rpyc (solo lectura).", game_dir), file=sys.stderr)
         return 1
 
     index = build_index(db)
