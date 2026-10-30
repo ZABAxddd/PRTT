@@ -385,37 +385,45 @@ class Preview:
             dur = max(dur, self.lib.duration(tf, "hide"))
         return dur
 
-    def background_transition(self, frame, prev):
-        """Transición declarada para el cambio de fondo entre dos diálogos, si existe."""
-        if prev is None or prev.stage.bg == frame.stage.bg:
-            return None
+    def _visual_signature(self, st):
+        return (st.bg, tuple(sorted((o.tag, o.attrs) for o in st.overlays.values())))
 
+    def _find_with_expression(self, frame):
+        """Última expresión `with` declarada desde el último `scene` (o desde el principio si no hay)."""
         events = frame.actions + [frame.event]
-        scene_index = next((i for i in range(len(events) - 1, -1, -1)
-                            if events[i].kind == "scene" and not events[i].data.get("onlayer")), None)
-        if scene_index is None:
-            return None
-
+        scene_i = next((i for i in range(len(events) - 1, -1, -1)
+                        if events[i].kind == "scene" and not events[i].data.get("onlayer")), 0)
         expression = None
-        for event in events[scene_index:]:
-            if event.kind == "with":
-                expression = event.data.get("expr", "")
-            elif event.kind in ("scene", "show", "hide", "say"):
-                attached = event.data.get("with")
+        for ev in events[scene_i:]:
+            if ev.kind == "with":
+                expression = ev.data.get("expr", "")
+            elif ev.kind in ("scene", "show", "hide", "say"):
+                attached = ev.data.get("with")
                 if attached is not None:
                     expression = attached
-
         expression = (expression or "").strip()
-        if not expression or expression == "None":
-            return None
+        return None if expression in ("", "None") else expression
 
-        if self._transition_specs is None:
-            self._transition_specs = transitions.collect_transitions(self.db, self._transition_mask)
-        spec = transitions.find_spec(self._transition_specs, expression)
-        if spec is not None:
-            return spec
-        return transitions.parse_constructor(
-            expression, expression, transitions.STANDARD, self._transition_mask)
+    def background_transition(self, frame, prev):
+        """Transición entre dos diálogos: cambio de fondo, `scene` repetido o capas (flash, blink, dark...).
+
+        Siempre devuelve una Spec dibujable (o None si no hay transición). Las que no se pueden
+        reproducir exactas vienen con spec.approx y spec.note explicando por qué."""
+        if prev is None:
+            return None
+        try:
+            changed = (self._visual_signature(prev.stage) != self._visual_signature(frame.stage)
+                       or any(e.kind == "scene" and not e.data.get("onlayer") for e in frame.actions))
+            if not changed:
+                return None
+            expression = self._find_with_expression(frame)
+            if not expression:
+                return None
+            if self._transition_specs is None:
+                self._transition_specs = transitions.collect_transitions(self.db, self._transition_mask)
+            return transitions.resolve(self.db, self._transition_specs, expression, self._transition_mask)
+        except Exception:
+            return None
 
     def _transition_mask(self, path: str):
         if path not in self._transition_masks:

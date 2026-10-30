@@ -42,7 +42,7 @@ class Spec:
 
     @property
     def label(self) -> str:
-        tag = {"renpy": "", "mod": _t("  · tuya"), "usada": _t("  · usada en tus scripts")}[self.source]
+        tag = {"renpy": "", "mod": _t("  · tuya"), "usada": _t("  · usada en tus scripts"), "ddlc": _t("  · base DDLC")}[self.source]
         return f"{self.name}{tag}{'  (aprox.)' if self.approx else ''}"
 
 
@@ -54,14 +54,14 @@ def _standard() -> List[Spec]:
     out = [
         _spec("dissolve", "dissolve", 0.5),
         _spec("fade", "fade", 1.0, out=0.5, hold=0.0, inn=0.5, color=(0, 0, 0)),
-        _spec("flash", "fade", 0.3, True, out=0.0, hold=0.0, inn=0.3, color=(255, 255, 255)),
+        _spec("flash", "fade", 0.6, out=0.1, hold=0.0, inn=0.5, color=(255, 255, 255)),
         _spec("pixellate", "pixellate", 1.0, steps=5),
         _spec("blinds", "blinds", 1.0, True),
         _spec("squares", "squares", 1.0, True),
         _spec("irisout", "iris", 1.0, mode="out"),
         _spec("irisin", "iris", 1.0, mode="in"),
-        _spec("hpunch", "punch", 0.25, axis="x"),
-        _spec("vpunch", "punch", 0.25, axis="y"),
+        _spec("hpunch", "punch", 0.275, mid=(0, 0), half=(15, 0), period=0.1),
+        _spec("vpunch", "punch", 0.275, mid=(0, 0), half=(0, 15), period=0.1),
         _spec("zoomin", "dissolve", 0.5, True),
         _spec("zoomout", "dissolve", 0.5, True),
         _spec("zoominout", "dissolve", 0.5, True),
@@ -94,7 +94,7 @@ NONE_SPEC = Spec(_t("(ninguna)"), "none", 0.0)
 # Lectura de tus `define nombre = Transicion(...)`
 # --------------------------------------------------------------------------------------
 _CTORS = {"Dissolve", "ImageDissolve", "AlphaDissolve", "Fade", "Pixellate", "CropMove", "MoveTransition",
-          "MultipleTransition", "ComposeTransition", "PushMove", "Move", "ZoomInOut", "SlideDisplay"}
+          "MultipleTransition", "ComposeTransition", "PushMove", "Move", "ZoomInOut", "SlideDisplay", "Pause"}
 _CROP = {
     "wipeleft": ("wipe", "left"), "wiperight": ("wipe", "right"), "wipeup": ("wipe", "up"),
     "wipedown": ("wipe", "down"),
@@ -115,10 +115,29 @@ def _name_of(node) -> str:
     return ".".join(reversed(parts))
 
 
+CONSTANTS: Dict[str, object] = {}
+
+
+def set_constants(defines: Dict[str, str]) -> None:
+    """define blink_t = 0.4 / define flash_col = "#fff" -> usables como argumentos de una transición."""
+    CONSTANTS.clear()
+    for k, v in defines.items():
+        if "." in k:
+            continue
+        try:
+            val = ast.literal_eval(v.strip())
+        except Exception:
+            continue
+        if isinstance(val, (int, float, str, tuple)) and not isinstance(val, bool):
+            CONSTANTS[k] = val
+
+
 def _lit(node, default=None):
     try:
         return ast.literal_eval(node)
     except Exception:
+        if isinstance(node, ast.Name) and node.id in CONSTANTS:
+            return CONSTANTS[node.id]
         return default
 
 
@@ -138,6 +157,8 @@ def _multi_steps(lst, expr, known, find_image):
         item = None
         if isinstance(e, ast.Constant) and isinstance(e.value, bool):
             item = ("new", None) if e.value else ("old", None)
+        elif isinstance(e, ast.Constant) and isinstance(e.value, str) and e.value.startswith("#"):
+            item = ("solid", _color(e.value))
         elif isinstance(e, ast.Call):
             nm = _name_of(e.func).split(".")[-1]
             arg = _lit(e.args[0]) if e.args else None
@@ -236,22 +257,56 @@ def parse_constructor(name: str, expr: str, known: Dict[str, Spec],
             total = sum(value.duration if kind == "transition" else value
                         for kind, value in steps[1::2])
             return Spec(name, "multi", total, dict(steps=steps), "mod")
+    if ctor == "Pause":
+        return Spec(name, "none", num(a[0] if a else kw.get("delay"), 0.0), source="mod")
+    if ctor == "PushMove":
+        mode = a[1] if len(a) > 1 else kw.get("mode", "pushright")
+        if isinstance(mode, str) and mode[4:] in ("left", "right", "up", "down"):
+            return Spec(name, "push", num(a[0] if a else kw.get("time"), 0.5), dict(dir=mode[4:]), "mod")
+    if ctor == "Move" and kw.get("bounce"):
+        sp, ep = (a[0] if a else None), (a[1] if len(a) > 1 else None)
+        if isinstance(sp, tuple) and isinstance(ep, tuple) and len(sp) == 2 and len(ep) == 2:
+            per = num(a[2] if len(a) > 2 else kw.get("time"), 0.1) or 0.1
+            return Spec(name, "punch", num(kw.get("delay"), per),
+                        dict(mid=((sp[0] + ep[0]) / 2, (sp[1] + ep[1]) / 2),
+                             half=((sp[0] - ep[0]) / 2, (sp[1] - ep[1]) / 2), period=per), "mod")
+    if ctor == "MultipleTransition":                       # no encaja en el patrón estricto: aproximación
+        return _approx_multiple(name, node, expr, known, find_image)
+    if ctor == "ComposeTransition":
+        main = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "trans"), None)
+        seg = ast.get_source_segment(expr, main) if main is not None else None
+        child = parse_constructor(name, seg, known, find_image) if seg else None
+        if child is not None:
+            return Spec(name, child.kind, child.duration, dict(child.params), "mod", True,
+                        _t("ComposeTransition: solo reproduzco la transición principal"))
     dur = num(a[0] if a else kw.get("delay", kw.get("time")), 0.5)
     return Spec(name, "dissolve", dur, source="mod", approx=True, note=_t("{0}: dibujada como disolución", ctor))
 
 
 def guess_by_name(name: str) -> Spec:
-    """Transición que viene del juego base (no está en tus .rpy): se adivina por su nombre."""
+    """Transición que no está en tus .rpy (juego base o función Python): se adivina por el nombre."""
     low = name.lower()
+    note = _t("adivinada por el nombre")
     for d in ("left", "right", "up", "down"):
         if "wipe" + d in low:
-            return Spec(name, "wipe", 1.0, dict(dir=d), "usada", True, _t("adivinada por el nombre"))
+            return Spec(name, "wipe", 1.0, dict(dir=d), "usada", True, note)
         if "slide" + d in low:
-            return Spec(name, "slide", 1.0, dict(dir=d), "usada", True, _t("adivinada por el nombre"))
-    if "fade" in low:
-        return Spec(name, "fade", 1.0, dict(out=0.5, hold=0.0, inn=0.5, color=(0, 0, 0)), "usada", True,
-                    _t("adivinada por el nombre"))
-    return Spec(name, "dissolve", 0.5 if "half" not in low else 0.25, source="usada", approx=True,
+            return Spec(name, "slide", 1.0, dict(dir=d), "usada", True, note)
+    if any(k in low for k in ("punch", "shake", "quake", "glitch")):
+        half = (0, 15) if ("vpunch" in low or "vshake" in low) else (15, 0)
+        return Spec(name, "punch", 0.275, dict(mid=(0, 0), half=half, period=0.1), "usada", True, note)
+    if any(k in low for k in ("flash", "white")):
+        return Spec(name, "fade", 0.6, dict(out=0.1, hold=0.0, inn=0.5, color=(255, 255, 255)), "usada", True, note)
+    if any(k in low for k in ("blink", "eye")):
+        return Spec(name, "fade", 0.6, dict(out=0.2, hold=0.1, inn=0.3, color=(0, 0, 0)), "usada", True, note)
+    if any(k in low for k in ("fade", "black", "dark")):
+        return Spec(name, "fade", 1.0, dict(out=0.5, hold=0.0, inn=0.5, color=(0, 0, 0)), "usada", True, note)
+    if "pixel" in low:
+        return Spec(name, "pixellate", 1.0, dict(steps=5), "usada", True, note)
+    if "iris" in low:
+        return Spec(name, "iris", 1.0, dict(mode="in" if "in" in low.replace("iris", "") else "out"),
+                    "usada", True, note)
+    return Spec(name, "dissolve", 0.25 if "half" in low else 0.5, source="usada", approx=True,
                 note=_t("adivinada por el nombre: no la encuentro definida en tus .rpy"))
 
 
@@ -278,6 +333,15 @@ def collect_transitions(db, find_image: Optional[Callable[[str], object]] = None
     """(ninguna), las estándar, las tuyas y las que tus scripts usan sin tenerlas definidas."""
     known: Dict[str, Spec] = dict(STANDARD)
     mine: List[Spec] = []
+    set_constants(db.defines)
+    for nm, ex in DDLC_BASE_DEFS.items():                   # el juego base los define; si no están en tus .rpy
+        if nm in db.defines:
+            continue
+        sp = parse_constructor(nm, ex, known, find_image)
+        if sp is not None and not sp.approx:
+            sp.source = "ddlc"
+            known[nm] = sp
+            mine.append(sp)
     for name, expr in db.defines.items():
         if "." in name:
             continue
@@ -291,6 +355,102 @@ def collect_transitions(db, find_image: Optional[Callable[[str], object]] = None
 
 def find_spec(specs: List[Spec], name: str) -> Optional[Spec]:
     return next((s for s in specs if s.name == name), None)
+
+
+# Definiciones del juego base (DDLC): se usan solo si tus .rpy / el .rpa no las traen.
+DDLC_BASE_DEFS: Dict[str, str] = {
+    "dissolve": "Dissolve(0.25)",
+    "dissolve_cg": "Dissolve(0.75)",
+    "dissolve_scene": "Dissolve(1.0)",
+    "dissolve_scene_full": 'MultipleTransition([False, Dissolve(1.0), Solid("#000"), Pause(1.0), '
+                           'Solid("#000"), Dissolve(1.0), True])',
+    "dissolve_scene_half": 'MultipleTransition([Solid("#000"), Pause(1.0), Solid("#000"), Dissolve(1.0), True])',
+    "close_eyes": 'MultipleTransition([False, Dissolve(0.5), Solid("#000"), Pause(0.25), True])',
+    "open_eyes": "MultipleTransition([False, Dissolve(0.5), True])",
+    "trueblack": 'MultipleTransition([Solid("#000"), Pause(0.25), Solid("#000")])',
+    "tpause": "Pause(0.25)",
+    "wipeleft": 'ImageDissolve("images/menu/wipeleft.png", 0.5, ramplen=64)',
+    "wipeleft_scene": 'MultipleTransition([False, ImageDissolve("images/menu/wipeleft.png", 0.5, ramplen=64), '
+                      'Solid("#000"), Pause(0.25), Solid("#000"), '
+                      'ImageDissolve("images/menu/wipeleft.png", 0.5, ramplen=64), True])',
+}
+
+
+def _approx_multiple(name, node, expr, known, find_image) -> Spec:
+    """MultipleTransition que no sé encajar: suma duraciones y elige fade (si hay Solid) o dissolve."""
+    total, color, fade = 0.0, (0, 0, 0), False
+    for c in (n for n in ast.walk(node) if isinstance(n, ast.Call) and n is not node):
+        nm = _name_of(c.func).split(".")[-1]
+        arg0 = _lit(c.args[0]) if c.args else None
+        if nm == "Solid":
+            color, fade = _color(arg0), True
+        elif nm == "Pause" and isinstance(arg0, (int, float)):
+            total += float(arg0)
+        elif nm in _CTORS:
+            src = ast.get_source_segment(expr, c)
+            child = parse_constructor(nm, src, known, find_image) if src else None
+            if child is not None:
+                total += child.duration
+                fade = fade or child.kind == "fade"
+    if node.args and isinstance(node.args[0], (ast.List, ast.Tuple)):
+        for e in node.args[0].elts:
+            if isinstance(e, ast.Name) and e.id in known:
+                total += known[e.id].duration
+    total = total if total > 0 else 1.0
+    note = _t("MultipleTransition aproximada")
+    if fade:
+        return Spec(name, "fade", total, dict(out=total / 2, hold=0.0, inn=total / 2, color=color), "mod", True, note)
+    return Spec(name, "dissolve", total, source="mod", approx=True, note=note)
+
+
+def _retime(spec: Spec, dur: float) -> None:
+    if spec.duration <= 0:
+        return
+    if spec.kind == "fade":
+        k = dur / spec.duration
+        for key in ("out", "hold", "inn"):
+            spec.params[key] = spec.params[key] * k
+    spec.duration = dur
+
+
+def resolve(db, specs: List[Spec], expression: str,
+            find_image: Optional[Callable[[str], object]] = None) -> Spec:
+    """Spec dibujable para CUALQUIER expresión de `with`. Nunca lanza excepciones ni devuelve None.
+
+    Orden: nombre conocido -> alias de `define` -> constructor (Fade(...), Dissolve(...)) ->
+    heurística por nombre y números -> dissolve. Si es aproximada, spec.approx y spec.note lo dicen."""
+    try:
+        set_constants(db.defines)
+        expr = " ".join((expression or "").split())
+        expr = re.sub(r"\s*\(\s*", "(", expr)
+        expr = re.sub(r"\s*\)", ")", expr)
+        expr = re.sub(r"\s*,\s*", ", ", expr)
+        if not expr or expr == "None":
+            return NONE_SPEC
+        known = {s.name: s for s in specs}
+        cur, seen = expr, set()
+        for _ in range(8):                                   # define a = b; define b = Fade(...)
+            if cur in known:
+                return known[cur]
+            if cur in seen or not _IDENT.match(cur) or cur not in db.defines:
+                break
+            seen.add(cur)
+            cur = db.defines[cur].strip()
+        spec = parse_constructor(expr, cur, known, find_image)
+        if spec is not None:
+            return spec
+        m = re.match(r"[A-Za-z_][\w.]*", cur)
+        spec = guess_by_name(expr if _IDENT.match(expr) else (m.group(0).split(".")[-1] if m else expr))
+        spec.name = expr
+        if not _IDENT.match(cur):
+            nums = [float(x) for x in re.findall(r"(?<![\w.])\d+(?:\.\d+)?(?![\w.])", cur)]
+            dur = next((n for n in nums if 0.05 <= n <= 5.0), None)
+            if dur:
+                _retime(spec, dur)
+        return spec
+    except Exception as exc:                                 # la vista previa nunca debe romperse por esto
+        return Spec(expression or "?", "dissolve", 0.5, source="usada", approx=True,
+                    note=_t("error leyendo la transición: {0}", exc))
 
 
 # --------------------------------------------------------------------------------------
@@ -336,7 +496,7 @@ def render(spec: Spec, old, new, t: float):
                 a_img, b_img = screen(steps[i - 1]), screen(steps[i + 1])
                 if kind == "transition":
                     return render(value, a_img, b_img, t - t0)
-                return b_img if t >= t0 + d else a_img
+                return b_img
             t0 += d
         return screen(steps[-1]).copy()
     out = old.copy()
@@ -405,11 +565,13 @@ def render(spec: Spec, old, new, t: float):
                     if box[2] > box[0] and box[3] > box[1]:
                         out.paste(new.crop(box), box[:2])
         return out
-    if k == "punch":
-        amp = (1 - p) * (w if P["axis"] == "x" else h) * 0.03
-        s = int(round(math.sin(p * math.pi * 10) * amp))
+    if k == "punch":                                         # Move(±15, .10, bounce, repeat, delay=.275)
+        if t >= spec.duration:
+            return new.copy()
+        c = math.cos(2 * math.pi * t / (float(P.get("period", 0.1)) or 0.1))
+        (mx, my), (hx, hy) = P.get("mid", (0, 0)), P.get("half", (15, 0))
         base = Image.new("RGBA", (w, h), (0, 0, 0, 255))
-        base.paste(new, (s, 0) if P["axis"] == "x" else (0, s))
+        base.paste(new, (int(round(mx + hx * c)), int(round(my + hy * c))))
         return base
     if k == "mask":
         cache = P.setdefault("_cache", {})

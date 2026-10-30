@@ -579,6 +579,16 @@ class ScriptDB:
         mm = re.match(r"^([A-Za-z_]\w*)\s*=\s*(\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*')\s*$", code)
         if mm:
             self.variables[mm.group(1)] = unquote(mm.group(2))
+        tm = re.match(r"^renpy\.(?:with_statement|transition)\(\s*(.*)\)\s*$", code)
+        if tm:                                      # $ renpy.with_statement(flash)  ==  with flash
+            expr, depth = tm.group(1), 0
+            for i, ch in enumerate(expr):           # descartar argumentos extra (layer=..., always=...)
+                depth += ch in "([{"
+                depth -= ch in ")]}"
+                if ch == "," and depth == 0:
+                    expr = expr[:i]
+                    break
+            return "with", {"expr": expr.strip(), "from_python": True}, False
         return "python", {"code": code}, False
 
     def _define(self, line: str):
