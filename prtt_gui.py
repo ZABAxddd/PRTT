@@ -228,6 +228,7 @@ class DialogueBrowser(tk.Tk):
         # Comentarios «# PRTT» en las líneas que PRTT escribe: APAGADO salvo que el usuario lo active.
         self._write_comments = tk.BooleanVar(value=bool(self._settings.get("write_comments", False)))
         self.writer = rpy_writer.ScriptWriter(game_dir, comments=self._write_comments.get())
+        self.writer.readonly = self.db.readonly                # los .rpyc/.rpa nunca se escriben
         self.hist = EditHistory()                         # deshacer / rehacer / cambios sin guardar
         self._scene_controller = scene_edit.SceneController(game_dir)
         self._scene_key = None                            # (label, nº) del diálogo con el que se abrió el selector
@@ -762,6 +763,16 @@ class DialogueBrowser(tk.Tk):
         if not quick:                      # durante la animación no se dibujan las celdas
             self._pv_draw_cells()
 
+    def _warn_compiled(self, only_new: bool = True) -> None:
+        """Aviso simplificado para scripts .rpyc."""
+        if not self._readonly_files():
+            return
+        messagebox.showinfo(
+            _t("Archivo .rpyc"),
+            _t("Este es un archivo .rpyc y no se puede modificar pero puedes previsualizar los diálogos y la preview."),
+            parent=self
+            
+        )
     # ------------------------------------------------------------------ scripts de solo lectura (leídos de un .rpyc)
     def _readonly_files(self):
         return getattr(self.db, "readonly", ())
@@ -771,8 +782,7 @@ class DialogueBrowser(tk.Tk):
 
     @staticmethod
     def _readonly_msg(file: str) -> str:
-        return _t("«{0}» viene de un .rpyc compilado: PRTT puede leerlo y previsualizarlo, pero no escribir en él.", file)
-
+        return _t("Este es un archivo .rpyc y no se puede modificar pero puedes previsualizar los diálogos y la preview.")
     # ------------------------------------------------------------------ celdas de personajes
     def _pv_frame(self) -> Optional[Frame]:
         return self._pv_frames[self._pv_i] if 0 <= self._pv_i < len(self._pv_frames) else None
@@ -1499,6 +1509,7 @@ class DialogueBrowser(tk.Tk):
         had_engine = self._pv is not None
         new_index = build_index(db)
         self.db = db
+        self.writer.readonly = db.readonly
         self._index_music_commands()
         self._pv_audio_tracks = None
         self._timelines.clear()
@@ -1509,6 +1520,7 @@ class DialogueBrowser(tk.Tk):
             self._catalog = None
             self.index = new_index
             self._rebuild_tree()
+            # self.after(200, self._warn_compiled)
         else:
             self._patch_lines(new_index)
         if cur_key is not None and cur_key[0] in db.labels:
@@ -1600,15 +1612,23 @@ class DialogueBrowser(tk.Tk):
     def _fill_tree(self) -> None:
         total = count_lines(self.index)
         n_labels = sum(len(v) for v in self.index.values())
+        self._notes = {}
+        ro = set(self._readonly_files())
         self.info.config(text=_t("{0} archivos · {1} labels · {2} líneas de diálogo", len(self.index), n_labels, total))
         for file, infos in self.index.items():
             all_lines = [dl for i in infos for dl in i.lines]
-            fid = self.tree.insert("", "end", text=f"{file}  ({len(all_lines)})", open=False)
+            if not all_lines:
+                continue
+            tag = "  🔒 .rpyc" if file in ro else ""
+            fid = self.tree.insert("", "end", text=f"{file}{tag}  ({len(all_lines)})", open=False)
             self._groups[fid] = all_lines
+            if file in ro:
+                self._notes[fid] = _t("Script compilado: solo preview, no se puede modificar.")
             for info in infos:
+                if not info.lines:
+                    continue
                 lid = self.tree.insert(fid, "end", text=f"{info.name}  ({len(info.lines)})")
                 self._groups[lid] = info.lines
-
     # ------------------------------------------------------------------ eventos
     def _show(self, lines) -> None:
         self.rows.delete(*self.rows.get_children())
@@ -1629,6 +1649,9 @@ class DialogueBrowser(tk.Tk):
         sel = self.tree.selection()
         if sel and sel[0] in self._groups:
             self._show(self._groups[sel[0]])
+            note = getattr(self, "_notes", {}).get(sel[0])
+            if note:
+                self._set_detail(note)
 
     def _on_select_row(self, _event=None) -> None:
         sel = self.rows.selection()
@@ -3396,4 +3419,6 @@ class _PosePicker(tk.Toplevel):
 
 
 def run(db: rpy_parser.ScriptDB, game_dir: str) -> None:
-    DialogueBrowser(db, game_dir).mainloop()
+    app = DialogueBrowser(db, game_dir)
+    # app.after(400, app._warn_compiled)   <--- Comenta o borra esta línea
+    app.mainloop()

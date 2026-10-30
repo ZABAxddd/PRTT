@@ -458,7 +458,12 @@ class ScriptWriter:
         self.comments = comments                # True: las líneas que PRTT escribe acaban en "  # PRTT"
         self._backed: set = set()
         self._journal: Dict[object, Tuple[List[str], List[str]]] = {}   # key -> (original, escrito)
+        self.readonly: Set[str] = set()         # scripts leídos de un .rpyc/.rpa: nunca se escriben
 
+    @staticmethod
+    def readonly_msg(rel: str) -> str:
+        return _t("Este es un archivo .rpyc y no se puede modificar pero puedes previsualizar los diálogos y la preview.")
+    
     def path_of(self, rel: str) -> str:
         return os.path.join(self.game_dir, *rel.split("/"))
 
@@ -522,6 +527,8 @@ class ScriptWriter:
         return results
 
     def _apply_file(self, rel: str, group: List[Change], expected_mtime: Optional[int]) -> List[Result]:
+        if rel in self.readonly:
+            return [Result(c.key, False, self.readonly_msg(rel)) for c in group]
         loaded = self._load(rel, expected_mtime)
         if isinstance(loaded, str):
             return [Result(c.key, False, f"{rel}: {loaded}") for c in group]
@@ -604,6 +611,8 @@ class ScriptWriter:
     # ------------------------------------------------------------------ diálogos
     def read_statements(self, rel: str, line_numbers: Sequence[int]) -> List[Tuple[str, str]]:
         """[(código, comentario)] de esas líneas del archivo. ValueError si no se puede leer."""
+        if rel in self.readonly:
+            raise ValueError(self.readonly_msg(rel))
         loaded = self._load(rel, None)
         if isinstance(loaded, str):
             raise ValueError(f"{rel}: {loaded}")
@@ -626,6 +635,8 @@ class ScriptWriter:
         return results
 
     def _dialogues_file(self, rel: str, group: List[DialogueEdit], expected_mtime: Optional[int]) -> List[Result]:
+        if rel in self.readonly:
+            return [Result(e.key, False, self.readonly_msg(rel)) for e in group]
         loaded = self._load(rel, expected_mtime)
         if isinstance(loaded, str):
             return [Result(e.key, False, f"{rel}: {loaded}") for e in group]

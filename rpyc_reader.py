@@ -67,9 +67,12 @@ class AstNode:
 class PyExpr(str):
     """Expresión de Python tal como se escribió en el script (Ren'Py la guarda como str con ubicación)."""
 
-    def __new__(cls, s: Any = "", filename: Any = None, linenumber: Any = None, py: Any = None) -> "PyExpr":
-        obj = super().__new__(cls, s)
-        obj.filename, obj.linenumber, obj.py = filename, linenumber, py
+    def __new__(cls, s: Any = "", *rest: Any, **kwargs: Any) -> "PyExpr":
+        # Ren'Py cambia los argumentos de PyExpr entre versiones (8.5: 7): solo el texto importa, el resto se tolera.
+        obj = super().__new__(cls, s if isinstance(s, str) else str(s))
+        obj.filename = rest[0] if len(rest) > 0 else kwargs.get("filename")
+        obj.linenumber = rest[1] if len(rest) > 1 else kwargs.get("linenumber")
+        obj.py = rest[2] if len(rest) > 2 else kwargs.get("py")
         return obj
 
     def __setstate__(self, state: Any) -> None:       # no aporta nada
@@ -131,6 +134,17 @@ _SAFE = {
 }
 
 
+_DANGEROUS_MODULES = {"os", "posix", "nt", "subprocess", "sys", "shutil", "socket", "builtins", "__builtin__",
+                      "importlib", "ctypes", "pty", "commands", "popen2", "webbrowser", "runpy", "code", "codeop",
+                      "marshal", "types", "operator", "functools", "itertools", "pickle", "cPickle"}
+_DANGEROUS_NAMES = {"eval", "exec", "compile", "open", "__import__", "getattr", "setattr", "system", "popen"}
+
+
+_HARMLESS_BUILTINS = {m: {"list": list, "dict": dict, "tuple": tuple, "str": str, "unicode": str, "int": int,
+                          "long": int, "float": float, "bool": bool, "slice": slice, "xrange": range, "range": range}
+                      for m in ("__builtin__", "builtins")}
+
+
 class _AstUnpickler(pickle.Unpickler):
     def find_class(self, module: str, name: str) -> Any:
         if module == "renpy" or module.startswith("renpy."):
@@ -145,7 +159,17 @@ class _AstUnpickler(pickle.Unpickler):
             return __import__("_codecs").encode
         if (module, name) in _SAFE:
             return _SAFE[(module, name)]
-        raise pickle.UnpicklingError(_t("el .rpyc contiene un objeto no permitido: {0}.{1}", module, name))
+        if module in _HARMLESS_BUILTINS and name in _HARMLESS_BUILTINS[module]:
+            return _HARMLESS_BUILTINS[module][name]
+        if module in _DANGEROUS_MODULES or name in _DANGEROUS_NAMES:
+            raise pickle.UnpicklingError(_t("el .rpyc contiene un objeto no permitido: {0}.{1}", module, name))
+        # Cualquier otra clase (de Ren'Py nuevo, de Python 2/3, de un mod): se sustituye por una clase inerte que solo
+        # guarda atributos. Nunca se ejecuta nada, y así un .rpyc de una versión futura sigue leyéndose.
+        key = (module, name)
+        cls = _stubs.get(key)
+        if cls is None:
+            cls = _stubs[key] = type(name, (AstNode,), {"__module__": module})
+        return cls
 
 
 def fix_text(s: str) -> str:
@@ -204,7 +228,7 @@ def load_rpyc(data: bytes) -> RpycFile:
     try:
         obj = _AstUnpickler(io.BytesIO(raw), encoding="latin-1").load()
     except (pickle.UnpicklingError, EOFError, AttributeError, ImportError, IndexError, KeyError,
-            TypeError, ValueError, MemoryError) as exc:
+            TypeError, ValueError, MemoryError, RecursionError, OverflowError, UnicodeError) as exc:
         raise RpycError(_t("no se pudo leer el contenido del .rpyc: {0}", exc))
     if isinstance(obj, tuple) and len(obj) == 2 and isinstance(obj[1], list):
         info, stmts = obj

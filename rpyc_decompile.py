@@ -60,11 +60,20 @@ def fmt_args(info: Any) -> str:
 
 
 def fmt_params(info: Any) -> str:
-    """ParameterInfo -> '(a, b=1, *args, **kwargs)'. '' si es None."""
+    """ParameterInfo -> '(a, b=1, *args, **kwargs)'. '' si es None. Acepta las formas de Ren'Py 6.99 a 8.x."""
     if info is None:
         return ""
+    raw = getattr(info, "parameters", None) or []
+    if isinstance(raw, dict):
+        raw = list(raw.items())
     out = []
-    for name, default in getattr(info, "parameters", None) or []:
+    for item in raw:
+        if isinstance(item, str):
+            name, default = item, None
+        else:
+            item = list(item) if isinstance(item, (tuple, list)) else [item]
+            name = item[0]
+            default = item[1] if len(item) > 1 else None
         out.append(_s(name) if default is None else f"{_s(name)}={_s(default)}")
     if getattr(info, "extrapos", None):
         out.append("*" + _s(info.extrapos))
@@ -137,7 +146,13 @@ class Decompiler:
             if kind not in _IGNORED:
                 self.warn(kind, getattr(n, "linenumber", None))
             return 1
-        return fn(n, nxt, indent) or 1
+        mark = len(self.o.lines)
+        try:
+            return fn(n, nxt, indent) or 1
+        except Exception as exc:                      # un nodo con campos raros no debe tumbar el archivo entero
+            del self.o.lines[mark:]
+            self.warn(f"{kind} ({type(exc).__name__}: {exc})", getattr(n, "linenumber", None))
+            return 1
 
     # ------------------------------------------------------------------ imágenes
     def _imspec(self, spec: Any) -> Tuple[str, List[str]]:
@@ -371,7 +386,7 @@ class Decompiler:
 
     def _var_name(self, n: Any) -> str:
         store = getattr(n, "store", "store") or "store"
-        name = _s(getattr(n, "varname", ""))
+        name = _s(getattr(n, "varname", "")) + (f"[{_s(n.index)}]" if getattr(n, "index", None) else "")
         return name if store == "store" else f"{store[6:] if store.startswith('store.') else store}.{name}"
 
     def _define(self, word: str, n: Any, indent: int) -> None:
@@ -388,6 +403,7 @@ class Decompiler:
         self._define("default", n, indent)
 
     def n_Image(self, n: Any, nxt: Any, indent: int) -> None:
+        self._prio = 0
         name = " ".join(_s(x) for x in getattr(n, "imgname", ()))
         atl = getattr(n, "atl", None)
         code = getattr(n, "code", None)
@@ -399,11 +415,13 @@ class Decompiler:
             self.o.put(indent, f"image {name} = {code_source(code)}", line)
 
     def n_Transform(self, n: Any, nxt: Any, indent: int) -> None:
+        self._prio = 0
         self.o.put(indent, f"transform {_s(n.varname)}{fmt_params(getattr(n, 'parameters', None))}:",
                    getattr(n, "linenumber", None))
         self.atl(getattr(n, "atl", None), indent + 1)
 
     def n_Style(self, n: Any, nxt: Any, indent: int) -> None:
+        self._prio = 0
         props = getattr(n, "properties", None) or {}
         parent = getattr(n, "parent", None)
         head = f"style {_s(n.style_name)}" + (f" is {_s(parent)}" if parent else "")

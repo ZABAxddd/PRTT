@@ -212,6 +212,7 @@ class ScriptDB:
         self.errors: List[str] = []
         self.sources: Dict[str, str] = {}     # archivo -> texto, solo de los scripts descompilados de un .rpyc
         self.readonly: set = set()            # archivos leídos de un .rpyc: PRTT no puede escribir en ellos
+        self.failed: Dict[str, str] = {}      # .rpyc que no se pudieron leer -> motivo (para mostrarlos en la lista)
         self.compiled_from: Dict[str, str] = {}   # archivo -> ruta del .rpyc (o rpa://...) de donde salió
         self._capture: Optional[list] = None  # donde guardar el cuerpo del bloque en curso
 
@@ -251,6 +252,7 @@ class ScriptDB:
                 self.errors.append(f"{rel}: {exc}")
         self._load_compiled(game_dir, rpyc_paths)
         self._index_labels()
+        self._drop_dead_positions()
         return self
 
     def _load_compiled(self, game_dir: str, rpyc_paths: List[str]) -> None:
@@ -267,7 +269,9 @@ class ScriptDB:
         except ImportError:                                          # el lector de .rpa es opcional
             rpa_reader = None
         if rpa_reader is not None:
-            for name in rpa_reader.get_vault(game_dir).names():
+            vault = rpa_reader.get_vault(game_dir)
+            self.errors.extend(_t("no se pudo abrir el .rpa {0}", e) for e in vault.errors)
+            for name in vault.names():
                 rel = name[:-1]
                 if name.lower().endswith(".rpyc") and rel not in have and rel not in found:
                     found[rel] = rpa_reader.RPA_PREFIX + name
@@ -286,6 +290,7 @@ class ScriptDB:
                 result = rpyc_decompile.decompile(rpyc_reader.load_rpyc(data).stmts)
             except Exception as exc:                                 # un .rpyc raro no debe impedir leer el resto
                 self.errors.append(_t("{0}: no se pudo leer el script compilado ({1})", rel + "c", exc))
+                self.failed[rel + "c"] = str(exc)
                 continue
             self.parse_text(result.text, rel)
             self.files.append(rel)
@@ -293,6 +298,33 @@ class ScriptDB:
             self.readonly.add(rel)
             self.compiled_from[rel] = origin
             self.errors.extend(f"{rel}: {w}" for w in result.warnings)
+
+    def _drop_dead_positions(self) -> None:
+        """Un transform de posición (t11, h32...) que no llega a fijar xpos —porque llama a un transform que no se pudo
+        leer, o usa algo que el intérprete ATL no entiende— se dibujaría en x=0. Se descarta para que las celdas usen la
+        posición estándar de siempre (el nombre tXY sigue valiendo en el script)."""
+        if not self.transform_defs:
+            return
+        try:
+            import atl
+            lib = atl.TransformLib(self.transform_defs)
+        except Exception:                                   # sin intérprete ATL no hay nada que comprobar
+            return
+        dead = []
+        for name in list(self.transform_defs):
+            pos = parse_position(name)
+            if pos is None or pos.motion == "hide":
+                continue
+            try:
+                ok = any("xpos" in atl.touched(lib.ops_for(name, ev)) for ev in ("show", "replace"))
+            except Exception:
+                ok = False
+            if not ok:
+                dead.append(name)
+        for name in dead:
+            del self.transform_defs[name]
+        if dead:
+            self.errors.append(_t("transforms de posición sin x legible (se usa la posición estándar): {0}", ", ".join(dead[:12])))
 
     def _index_labels(self) -> None:
         self.labels = {}

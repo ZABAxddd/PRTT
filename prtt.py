@@ -122,6 +122,47 @@ def cli_catalog(db: rpy_parser.ScriptDB, game_dir: str, tag: str = "") -> int:
     return 0
 
 
+def cli_diag(db: rpy_parser.ScriptDB, game_dir: str) -> int:
+    """Qué se leyó de los .rpy, .rpyc y .rpa, y por qué algo pudo quedarse fuera."""
+    import rpa_reader
+    n_loose = len([f for f in db.files if f not in db.readonly])
+    print(_t("Carpeta: {0}", game_dir))
+    print(_t("Scripts .rpy sueltos: {0} · scripts compilados leídos (.rpyc/.rpa): {1}", n_loose, len(db.readonly)))
+    vault = rpa_reader.get_vault(game_dir)
+    print(_t(".rpa abiertos: {0} ({1} archivos dentro)", len(vault.archives), len(vault.names())))
+    for arc in vault.archives:
+        print(f"   {os.path.basename(arc.path)}  {arc.version}  {len(arc.index)}")
+    print(_t("Definiciones: {0} personajes · {1} imágenes · {2} transforms · {3} define/default · {4} styles",
+             len(db.characters), len(db.images), len(db.transform_defs), len(db.defines), len(db.styles)))
+    print(_t("Labels: {0}", len(db.labels)))
+    if db.readonly:
+        print(_t("\nScripts compilados leídos:"))
+        for rel in sorted(db.readonly):
+            n_lab = sum(1 for e in db.events if e.file == rel and e.kind == "label")
+            n_say = sum(1 for e in db.events if e.file == rel and e.kind == "say")
+            print(f"   {rel:<40} {n_lab:>4} labels {n_say:>6} diálogos   <- {db.compiled_from.get(rel, '')}")
+    if db.errors:
+        print(_t("\nAvisos ({0}):", len(db.errors)))
+        for e in db.errors:
+            print("   ", e)
+    else:
+        print(_t("\nSin avisos."))
+    return 0
+
+
+def cli_transform(db: rpy_parser.ScriptDB, name: str) -> int:
+    """Cómo quedó leído un transform (lo que usan las celdas): parámetros y cuerpo ATL."""
+    td = db.transform_defs.get(name)
+    if td is None:
+        print(_t("No hay ningún transform '{0}'. Definidos: {1}", name, ", ".join(sorted(db.transform_defs)[:40]) or "-"),
+              file=sys.stderr)
+        return 1
+    print(f"transform {td.name}({td.params}):")
+    for rel, text in td.body:
+        print("    " * (1 + rel // 4) + text)
+    return 0
+
+
 def cli_music(db: rpy_parser.ScriptDB, game_dir: str) -> int:
     """Pistas de música de los .rpy: nombre (comentario o variable), archivo, duración y dónde se usan."""
     import audio
@@ -194,6 +235,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--catalogo", nargs="?", const="", metavar=_t("PERSONAJE"),
                     help=_t("poses y expresiones leídas de definitions.rpy (opcional: solo un personaje)"))
     ap.add_argument("--musica", action="store_true", help=_t("listar las pistas de música (comentario # Título o variable)"))
+    ap.add_argument("--diag", action="store_true", help=_t("diagnóstico: qué se leyó de .rpy/.rpyc/.rpa y qué avisos hubo"))
+    ap.add_argument("--transform", metavar="t11", help=_t("mostrar cómo se leyó un transform (parámetros y cuerpo ATL)"))
     ap.add_argument("--conf", action="store_true", help=_t("mostrar qué ajustes de la caja de texto se leyeron de tus .rpy"))
     args = ap.parse_args(argv)
 

@@ -297,11 +297,18 @@ class Preview:
     def rest_state(self, actor: Actor) -> Dict[str, float]:
         """Dónde queda el personaje cuando termina la animación."""
         name = actor.pos_name
-        if not name or name in HIDE_TRANSFORMS:           # sin posición, o ya se está yendo
+        if not name or name in HIDE_TRANSFORMS:
             name = f"t{actor.count}{actor.slot}" if actor.count and actor.slot else "t11"
-        if self.lib.has(name):
-            return self.lib.final(name, "show")
-        return self._fallback_state(name)
+        
+        st = dict(self.lib.final(name, "show") if self.lib.has(name) else self._fallback_state(name))
+        
+        # Si el transform no ajustó el zoom o el anclaje vertical, aplicar el estándar de DDLC
+        if st.get("zoom", 1.0) == 1.0:
+            st["zoom"] = 0.8
+        if st.get("yanchor", 0.0) == 0.0:
+            st["yanchor"] = 1.0
+            st["ypos"] = 1.03 * H
+        return st
 
     def cell_rects(self, count: int) -> List[Tuple[int, str, float, float, float, float]]:
         """Celdas para elegir personaje cuando hay `count` en escena (0 = ninguna).
@@ -440,8 +447,14 @@ class Preview:
 
     def _draw_actor(self, canvas, actor: Actor, st: Dict[str, float], quick: bool) -> None:
         img = self.actor_image(actor)
-        zx, zy = st["zoom"] * st["xzoom"], st["zoom"] * st["yzoom"]
-        w, h = max(int(round(img.width * abs(zx))), 1), max(int(round(img.height * abs(zy))), 1)
+        
+        # Normalizar si el sprite original fue dibujado a más de 960px de alto
+        base_scale = 960.0 / img.height if img.height > 960 else 1.0
+        
+        zx = st["zoom"] * st["xzoom"] * base_scale
+        zy = st["zoom"] * st["yzoom"] * base_scale
+        w = max(int(round(img.width * abs(zx))), 1)
+        h = max(int(round(img.height * abs(zy))), 1)
         if (w, h) != img.size:
             img = img.resize((w, h), _resample().BILINEAR if quick else _resample().LANCZOS)
         if zx < 0:
@@ -457,7 +470,7 @@ class Preview:
         x = st["xpos"] - st["xanchor"] * w + st["xoffset"]
         y = st["ypos"] - st["yanchor"] * h + st["yoffset"]
         paste_rgba(canvas, img, int(round(x)), int(round(y)))
-
+        
     # ------------------------------------------------------------------ un solo sprite (ventana de transforms)
     def sprite_frame(self, tag: str, attrs, expr: str, event: str, t: Optional[float],
                      start_expr: str = "", bg: str = "", quick: bool = False):

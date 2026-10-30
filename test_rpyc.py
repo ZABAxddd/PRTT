@@ -240,6 +240,75 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(rpyc_reader.fix_text("plain"), "plain")
 
 
+class FutureProofTests(unittest.TestCase):
+    def test_default_language_translate_keeps_dialogue(self):
+        say = ast("Say", who="s", what="hola", interact=True, attributes=None, with_=None, linenumber=3)
+        stmts = [ast("Label", name="a", linenumber=2, parameters=None, hide=False, block=[
+            ast("Translate", language=None, identifier="a_1", linenumber=3, block=[say])])]
+        text = rpyc_decompile.decompile(rpyc_reader.load_rpyc(make_rpyc(stmts)).stmts).text
+        self.assertIn('s "hola"', text)
+
+    def test_dead_position_transform_is_dropped(self):
+        db = rpy_parser.ScriptDB()
+        db.parse_text("transform t11:\n    tcommon(640)\n\ntransform t21:\n    xcenter 320\n", "t.rpy")
+        db._drop_dead_positions()
+        self.assertEqual(list(db.transform_defs), ["t21"])
+
+    def test_params_in_any_shape(self):
+        for params in ([("x", "640"), ("z", "0.80")], {"x": "640", "z": "0.80"}, [("x", "640", 1), ("z", "0.80", 1)]):
+            info = F("renpy.ast", "ParameterInfo", parameters=params, extrapos=None, extrakw=None)
+            self.assertEqual(rpyc_decompile.fmt_params(info), "(x=640, z=0.80)")
+
+    def test_pyexpr_with_extra_args_ren_py_8_5(self):
+        e = rpyc_reader.PyExpr("x + 1", "game/a.rpy", 3, None, "hash", 4, "extra")
+        self.assertEqual(e, "x + 1")
+        self.assertEqual(rpyc_reader.PyExpr("y"), "y")
+
+    def test_unknown_future_classes_become_inert_stubs(self):
+        extra = F("renpy.nueva.cosa", "NodoDelFuturo", valor=1)
+        stmts = [ast("Label", name="a", linenumber=1, parameters=None, hide=False, block=[
+            ast("Say", who=None, what="sigue", interact=True, attributes=None, with_=None, linenumber=2, extra=extra)])]
+        f = rpyc_reader.load_rpyc(make_rpyc(stmts))
+        self.assertIn('"sigue"', rpyc_decompile.decompile(f.stmts).text)
+
+    def test_bad_node_does_not_kill_file(self):
+        stmts = [ast("Label", name="a", linenumber=1, parameters=None, hide=False, block=[
+            ast("Jump", expression=False, linenumber=2),                      # sin `target`: falla solo ese nodo
+            ast("Say", who=None, what="sigue", interact=True, attributes=None, with_=None, linenumber=3)])]
+        res = rpyc_decompile.decompile(rpyc_reader.load_rpyc(make_rpyc(stmts)).stmts)
+        self.assertIn('"sigue"', res.text)
+        self.assertEqual(len(res.warnings), 1)
+
+    def test_definitions_inside_rpa_feed_the_db(self):
+        defs = [
+            ast("Init", priority=0, linenumber=1, block=[ast("Define", varname="mi", store="store", linenumber=1,
+                code=pycode('Character("Mita", image="mita")'))]),
+            ast("Init", priority=500, linenumber=2, block=[ast("Image", imgname=("mita", "1a"), linenumber=2, atl=None,
+                code=pycode('"mita/1a.png"'))]),
+            ast("Init", priority=0, linenumber=3, block=[ast("Define", varname="t1", store="store.audio", linenumber=3,
+                code=pycode('"bgm/1.ogg"'))]),
+        ]
+        game = tempfile.mkdtemp()
+        make_rpa(os.path.join(game, "scripts.rpa"), {"definitions.rpyc": make_rpyc(defs)})
+        db = rpy_parser.load(game)
+        self.assertIn("mi", db.characters)
+        self.assertIn("mita 1a", db.images)
+        self.assertIn("audio.t1", db.defines)
+
+    def test_writer_refuses_readonly(self):
+        try:
+            import rpy_writer
+        except ImportError as exc:
+            self.skipTest(str(exc))
+        w = rpy_writer.ScriptWriter(tempfile.mkdtemp(), backup=False)
+        w.readonly = {"x.rpy"}
+        with self.assertRaises(ValueError):
+            w.read_statements("x.rpy", [1])
+        r = w.apply_dialogues([rpy_writer.DialogueEdit("k", "x.rpy", 1, "a", "b")])
+        self.assertFalse(r[0].ok)
+        self.assertIn("no se puede modificar", r[0].msg)
+
+
 class DbIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

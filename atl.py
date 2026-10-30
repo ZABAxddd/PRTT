@@ -25,9 +25,9 @@ from i18n import _t
 SCREEN_W, SCREEN_H = 1280, 720
 
 DEFAULT_STATE: Dict[str, float] = {
-    "xpos": 0.0, "ypos": 0.0, "xanchor": 0.0, "yanchor": 0.0,
+    "xpos": 0.0, "ypos": 741.6, "xanchor": 0.5, "yanchor": 1.0,
     "xoffset": 0.0, "yoffset": 0.0,
-    "zoom": 1.0, "xzoom": 1.0, "yzoom": 1.0, "alpha": 1.0,
+    "zoom": 0.8, "xzoom": 1.0, "yzoom": 1.0, "alpha": 1.0,
 }
 STATE_KEYS = tuple(DEFAULT_STATE)
 
